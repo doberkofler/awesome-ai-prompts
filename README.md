@@ -17,10 +17,13 @@
 
 ## Coding-Specific
 
-### Commands (opencode)
+### opencode - commands
 
 - [dev-reset.md](commands/dev-reset.md) - A formalized epistemic reset protocol
 - [dev-verimode.md](commands/dev-verimode.md) - A verification-first, documentation-grounded response protocol
+
+### opencode - resources
+- [dev-reset.md](https://github.com/awesome-opencode/awesome-opencode) - awesome opencode
 
 ## Prompt engineering
 
