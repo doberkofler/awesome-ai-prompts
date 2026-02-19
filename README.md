@@ -23,7 +23,7 @@
 - [dev-verimode.md](commands/dev-verimode.md) - A verification-first, documentation-grounded response protocol
 
 ### opencode - resources
-- [dev-reset.md](https://github.com/awesome-opencode/awesome-opencode) - awesome opencode
+- [awesome-opencode](https://github.com/awesome-opencode/awesome-opencode) - awesome opencode
 
 ## Prompt engineering
 
