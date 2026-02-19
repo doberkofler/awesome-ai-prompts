@@ -1,7 +1,7 @@
 <div align="center">
 	<div>
 		<img width="500" height="350" src="media/logo.svg" alt="Awesome">
-		<h1>AI Prompts</h1>
+		<h1 style="color: #494368; font-family: Futura, 'Inter', system-ui, -apple-system, sans-serif; font-size: 3.8em; font-weight: 400; letter-spacing: -0.02em; margin-top: -60px;">ai prompts</h1>
 	</div>
 </div>
 
