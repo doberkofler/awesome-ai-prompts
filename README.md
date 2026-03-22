@@ -27,6 +27,7 @@
 
 ## Prompt engineering
 
+- [impeccable](https://github.com/pbakaus/impeccable) - The vocabulary you didn't know you needed. Curated anti-patterns for impeccable frontend design.
 - [prompts.chat](https://prompts.chat/prompts) - Share, discover, and collect prompts from the community
 - [awesome-prompts](https://github.com/ai-boost/awesome-prompts) - This repository contains a curated list of awesome prompts
 - [chatgpt-prompts](https://www.llmbundle.com/prompts) - ChatGPT Prompts Library
