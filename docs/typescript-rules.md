@@ -1,6 +1,9 @@
 # TypeScript Best Practices
 
-You are an expert TypeScript developer who writes clean, maintainable code that I am not going to regret later and follows strict linting rules.
+You are an expert TypeScript developer who writes clean, maintainable code that is not going to be regretted later and follows strict linting rules.
+
+> **Core priority**: Type safety and code quality are non-negotiable. Every shortcut taken here compounds into maintenance debt. When in doubt, be stricter.
+
 **Keep in Mind**: The code will be parsed using TypeScript compiler with strict type checking enabled and should adhere to modern ECMAScript standards.
 
 ## Stylistic
@@ -9,9 +12,9 @@ You are an expert TypeScript developer who writes clean, maintainable code that 
 - Never omit curly braces around blocks, even when they are optional
 
 ### Naming Conventions
-- **Variables/Functions**: `camelCase`.
-- **Files**: `camelCase` seems preferred (e.g., `user.ts`, `supplierInvoice.ts`).
-- **Constants**: `UPPER_CASE` for global constants.
+- **Variables/Functions**: `camelCase`
+- **Files**: `camelCase` (e.g., `user.ts`, `supplierInvoice.ts`)
+- **Constants**: `UPPER_CASE` for global constants
 
 ## JavaScript
 - Target ES2022
@@ -19,7 +22,10 @@ You are an expert TypeScript developer who writes clean, maintainable code that 
 
 ## Type Safety & Configuration
 
-- Use the following flags in @tsconfig.json:
+> Type safety is a top priority. Never weaken it for convenience.
+
+- Use the following flags in `tsconfig.json`:
+
 ```json
 {
 	"strict": true,
@@ -42,146 +48,180 @@ You are an expert TypeScript developer who writes clean, maintainable code that 
 	"allowUnreachableCode": false,
 	"allowUnusedLabels": false,
 	"forceConsistentCasingInFileNames": true,
-	"noEmitOnError": true,
+	"noEmitOnError": true
 }
 ```
 
-- Never use `// @ts-ignore` or `// @ts-expect-error` without explanatory comments that must start with a `NOTE: ` prefix
+### Suppression Rules
 
-## Eslint
+- **Never** use `// @ts-ignore` or `// @ts-expect-error` without:
+  1. A comment starting with `NOTE: ` explaining _why_ it is unavoidable
+  2. Explicit permission requested and granted before adding it
+- **Never** relax any lint or TypeScript rule (e.g., disabling eslint rules inline, weakening tsconfig flags, casting to `any`) without:
+  1. Demonstrating it is strictly necessary — not merely convenient
+  2. Asking for explicit permission before proceeding
+  3. Adding a `NOTE: ` comment at the suppression site explaining the justification
 
-- TODO: ???
+Treat any suppression as a last resort, not a workaround.
+
+## ESLint
+
+Recommended rules to enforce (beyond `@typescript-eslint/recommended-type-checked`):
+
+```jsonc
+{
+  "@typescript-eslint/no-explicit-any": "error",
+  "@typescript-eslint/no-unsafe-assignment": "error",
+  "@typescript-eslint/no-unsafe-call": "error",
+  "@typescript-eslint/no-unsafe-member-access": "error",
+  "@typescript-eslint/no-unsafe-return": "error",
+  "@typescript-eslint/no-unsafe-argument": "error",
+  "@typescript-eslint/consistent-type-imports": ["error", {"prefer": "type-imports", "fixStyle": "inline-type-imports"}],
+  "@typescript-eslint/consistent-type-exports": "error",
+  "@typescript-eslint/no-import-type-side-effects": "error",
+  "no-restricted-syntax": [
+    "error",
+    {
+      // Rule 1: Disallow JSON.parse without Zod validation
+      "selector": "CallExpression[callee.object.name='JSON'][callee.property.name='parse']",
+      "message": "JSON.parse is forbidden without Zod runtime validation. Use a Zod schema's .parse() or .safeParse() on the result instead."
+    }
+  ]
+}
+```
+
+> The `no-restricted-syntax` rule on `JSON.parse` enforces that all JSON deserialization goes through a Zod schema. There is no safe exception — even "internal" JSON can be malformed. If you believe you have a genuine exception, ask before adding an eslint-disable.
 
 ## Documentation
-- Use JSDoc (`/** ... */`) for exported functions, especially in `src/data/`.
+- Use JSDoc (`/** ... */`) for all exported functions and types
+- Especially required in `src/data/`
 
 ## Type Definitions
 
-- Do not ever use `any`. Ever. If you feel like you have to use `any`, use `unknown` instead.
+> Code quality and type safety are the top priorities. Every type hole is a potential runtime crash.
+
+- **Never** use `any`. If tempted, use `unknown` and narrow explicitly.
+- **Never** use type assertions (`as`) on external data — use Zod (see below).
 - Explicitly type function parameters, return types, and object literals.
-- Please don't ever use Enums. Use a union if you feel tempted to use an Enum.
-- Use `readonly` modifiers for immutable properties and arrays
-- Use `private` modifiers for private methods
-- Leverage TypeScript's utility types (`Partial`, `Required`, `Pick`, `Omit`, `Record`, etc.)
-- Use discriminated unions with exhaustiveness checking for type narrowing
-- Handle `null` and `undefined` explicitly
-- Exported Functions must have explicit return types
-- Prefer type to interface
+- No enums. Use union types.
+- Use `readonly` modifiers for immutable properties and arrays.
+- Use `private` modifiers for private class members.
+- Leverage utility types (`Partial`, `Required`, `Pick`, `Omit`, `Record`, etc.).
+- Use discriminated unions with exhaustiveness checking for type narrowing.
+- Handle `null` and `undefined` explicitly — never assume.
+- All exported functions must have explicit return types.
+- Prefer `type` over `interface`.
 
 ## Advanced Patterns
 
-- Implement proper generics with appropriate constraints
-- Use mapped types and conditional types to reduce type duplication
-- Leverage `const` assertions for literal types
-- Implement branded/nominal types for type-level validation
+- Implement generics with appropriate constraints — avoid unconstrained `T` where a bound is possible.
+- Use mapped types and conditional types to reduce type duplication.
+- Use `const` assertions for literal types.
+- Implement branded/nominal types for type-level validation where domain correctness matters (e.g., `UserId`, `EmailAddress`).
 
 ## Code Organization
 
-- Organize types in dedicated files (types.ts) or alongside implementations
-- Document everything with JSDoc comments
-- Create a central `types.ts` file or a `src/types` directory for shared types
+- Organize types in dedicated files (`types.ts`) or alongside implementations.
+- Document everything with JSDoc.
+- Create a central `types.ts` or `src/types/` directory for shared types.
 
 ## Best Practices
 
-- Use nullish coalescing (`??`) and optional chaining (`?.`) operators appropriately
-- Prefix unused variables with underscore (e.g., \_unusedParam)
-- Use `const` for all variables that aren't reassigned, `let` otherwise
-- Don't use `await` in return statements (return the Promise directly)
-- Always use curly braces for control structures, even for single-line blocks
-- Prefer object spread (e.g. `{ ...args }`) over `Object.assign`
-- Use rest parameters instead of `arguments` object
-- Use template literals instead of string concatenation
+- Use `??` and `?.` where appropriate — never use `||` as a null-coalescing substitute (it conflates `null`/`undefined` with falsy).
+- Prefix unused variables with `_` (e.g., `_unusedParam`).
+- `const` for everything that isn't reassigned, `let` otherwise. Never `var`.
+- Don't `await` in return statements — return the Promise directly.
+- Always use curly braces for control flow, even single-line.
+- Prefer object spread (`{...args}`) over `Object.assign`.
+- Use rest parameters instead of `arguments`.
+- Use template literals instead of string concatenation.
+- Prefer `structuredClone` over manual deep-copy patterns.
+- Use `satisfies` operator to validate shapes without widening the inferred type.
 
 ## Import Organization
 
-- Keep imports at the top of the file
-- Group imports in this order: `built-in → external → internal → parent → sibling → index → object → type`
-- Add blank lines between import groups
-- Sort imports alphabetically within each group
-- Avoid duplicate imports
-- Avoid circular dependencies
-- Ensure member imports are sorted (e.g., `import { A, B, C } from 'module'`)
-- Import types as `import {type myType}` and not `import type {myType}`
-- Only use named exports and imports
-- Use explicit file extensions in relative imports. Correct: `import {helper} from './utils.ts';` Incorrect: `import {helper} from './utils';`
+- Imports at top of file.
+- Group order: `built-in → external → internal → parent → sibling → index → object → type`
+- Blank line between groups.
+- Alphabetical sort within groups.
+- No duplicate or circular imports.
+- Import types inline: `import {type MyType} from '...'` — not `import type {MyType}`.
+- Named exports/imports only. No default exports.
+- Explicit file extensions in relative imports: `import {helper} from './utils.ts'`.
 
+---
 
-# Type Validation with Zod
+# Runtime Validation with Zod
 
-You are an expert TypeScript developer who understands that type assertions (using `as`) only provide compile-time safety without runtime validation.
+> **Rule**: `JSON.parse` is banned without Zod. Type assertions (`as`) on external data are banned. No exceptions without explicit permission.
 
-## Zod Over Type Assertions
+Type assertions only provide compile-time safety. They are lies to the compiler at runtime. All external data — API responses, `JSON.parse` output, environment variables, message queue payloads, localStorage — must go through Zod.
 
-- **NEVER** use type assertions (with `as`) for external data sources, API responses, or user inputs
-- **ALWAYS** use Zod schemas to validate and parse data from external sources
-- Implement proper error handling for validation failures
+## Rules
 
-## Zod Implementation Patterns
+- **Never** use `as` for external/runtime data sources.
+- **Never** call `JSON.parse(...)` and use the result without immediately passing it to a Zod schema.
+- Use `schema.parse()` when a validation failure should throw.
+- Use `schema.safeParse()` when you want to handle the error branch explicitly.
+- Add `.refine()` / `.superRefine()` for domain-level constraints (not just shape).
+- Use `.default()` for optional fields with known fallbacks.
+- Use `.transform()` for data normalization at the boundary.
 
-- Import zod with: `import {z} from 'zod'`
-- Define schemas near related types or in dedicated schema files
-- Use `schema.parse()` for throwing validation behavior
-- Use `schema.safeParse()` for non-throwing validation with detailed errors
-- Add meaningful error messages with `.refine()` and `.superRefine()`
-- Set up default values with `.default()` when appropriate
-- Use transformations with `.transform()` to convert data formats
-- Always handle potential validation errors
+## Patterns
 
 ```typescript
-// ❌ WRONG: Using type assertions
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  age: number;
-}
+// ❌ WRONG: type assertion — no runtime safety
+const data = JSON.parse(raw) as User;
 
-const fetchUser = async (id: string): Promise<User> => {
-  const response = await fetch(`/api/users/${id}`);
-  const data = await response.json();
-  return data as User; // DANGEROUS: No runtime validation!
-};
+// ❌ WRONG: JSON.parse without immediate Zod validation
+const parsed = JSON.parse(raw);
+const user = UserSchema.parse(parsed); // still wrong — the parse is unguarded
+
+// ✅ RIGHT: immediate Zod parse on JSON.parse output
+const user = UserSchema.parse(JSON.parse(raw));
+
+// ✅ RIGHT: safeParse for non-throwing path
+const result = UserSchema.safeParse(JSON.parse(raw));
+if (!result.success) {
+	throw new Error(`Invalid shape: ${result.error.format()}`);
+}
+const user = result.data;
 ```
 
 ```typescript
-// ✅ RIGHT: Using Zod for validation
 import {z} from 'zod';
 
-// Define the schema
+// Define schema — derive type from it, never the reverse
 const UserSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().min(1),
-  email: z.string().email(),
-  age: z.number().int().positive().min(13),
+	id: z.string().uuid(),
+	name: z.string().min(1),
+	email: z.string().email(),
+	age: z.number().int().positive().min(13),
 });
 
-// Derive the type from the schema
 type User = z.infer<typeof UserSchema>;
 
-const fetchUser = async (id: string): Promise<User> => {
-  const response = await fetch(`/api/users/${id}`);
-  const data = await response.json();
-
-  // Runtime validation
-  return UserSchema.parse(data);
+/** Fetches and validates a user by ID. Throws on invalid shape or network error. */
+export const fetchUser = async (id: string): Promise<User> => {
+	const response = await fetch(`/api/users/${id}`);
+	const raw: unknown = await response.json();
+	return UserSchema.parse(raw);
 };
+```
 
-// With error handling
-const fetchUserSafe = async (id: string): Promise<User | null> => {
-  try {
-    const response = await fetch(`/api/users/${id}`);
-    const data = await response.json();
+## Environment Variables
 
-    const result = UserSchema.safeParse(data);
-    if (!result.success) {
-      console.error('Invalid user data:', result.error.format());
-      return null;
-    }
+Environment variables are strings from an untrusted source. Validate them at startup:
 
-    return result.data;
-  } catch (error) {
-    console.error('Error fetching user:', error);
-    return null;
-  }
-};
+```typescript
+import {z} from 'zod';
+
+const EnvSchema = z.object({
+	DATABASE_URL: z.string().url(),
+	PORT: z.coerce.number().int().positive().default(3000),
+	NODE_ENV: z.union([z.literal('development'), z.literal('production'), z.literal('test')]),
+});
+
+/** Parsed and validated environment. Throws at startup if env is malformed. */
+export const env = EnvSchema.parse(process.env);
 ```

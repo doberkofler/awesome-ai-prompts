@@ -1,0 +1,6 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // You can configure the instructions for the model you’re using through the instructions option.
+  "instructions": ["docs/*.md"],
+}
