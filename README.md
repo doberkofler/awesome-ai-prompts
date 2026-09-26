@@ -5,6 +5,58 @@
 	</div>
 </div>
 
+## Install / update the AI rules
+
+Distributes the rules in [`docs/`](docs/), plus [`commands/`](commands/) and
+[`skills/`](skills/), to your local agent configurations:
+
+| Agent | Rules | Commands | Skills |
+| --- | --- | --- | --- |
+| opencode | `~/.config/opencode/docs/` | `~/.config/opencode/commands/` | `~/.config/opencode/skills/` |
+| Claude Code | `~/.claude/rules/` | `~/.claude/commands/` | `~/.claude/skills/` |
+| Codex | `~/.codex/AGENTS.md` | `~/.codex/prompts/` | `~/.agents/skills/` |
+| Pi | `~/.pi/agent/AGENTS.md` | `~/.pi/agent/prompts/` | `~/.pi/agent/skills/` |
+
+Requires `git` and Python 3.
+
+### One-liner (recommended)
+
+macOS / Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/doberkofler/awesome-ai-prompts/main/sync_ai_rules.py | python3 -
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/doberkofler/awesome-ai-prompts/main/sync_ai_rules.py | python -
+```
+
+### Or clone
+
+```bash
+git clone https://github.com/doberkofler/awesome-ai-prompts.git ~/.ai-rules/src
+python3 ~/.ai-rules/src/sync_ai_rules.py
+```
+
+### Update and verify
+
+```bash
+python3 ~/.ai-rules/src/sync_ai_rules.py            # pull latest and distribute
+python3 ~/.ai-rules/src/sync_ai_rules.py --check    # is the install current?
+```
+
+Optional alias: `alias ai-rules='python3 ~/.ai-rules/src/sync_ai_rules.py'`.
+
+### Notes
+
+- No symlinks and no admin rights; only the user-level directories above are written.
+- Codex reads a single concatenated `~/.codex/AGENTS.md`. If the script prints a size
+  warning, add the suggested `project_doc_max_bytes` line to `~/.codex/config.toml`.
+- Codex custom prompts (`~/.codex/prompts/`) are deprecated by Codex; skills are the
+  durable mechanism and are distributed to all agents.
+
 ## General Meta-Prompts
 
 | Name | Description | Prompt |
