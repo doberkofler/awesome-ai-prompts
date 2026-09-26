@@ -12,10 +12,16 @@ Distributes the rules in [`docs/`](docs/), plus [`commands/`](commands/) and
 
 | Agent | Rules | Commands | Skills |
 | --- | --- | --- | --- |
-| opencode | `~/.config/opencode/docs/` | `~/.config/opencode/commands/` | `~/.config/opencode/skills/` |
-| Claude Code | `~/.claude/rules/` | `~/.claude/commands/` | `~/.claude/skills/` |
+| opencode | `~/.config/opencode/AGENTS.md` | `~/.config/opencode/commands/` | reads `~/.agents/skills/` |
+| Claude Code | `~/.claude/CLAUDE.md` | `~/.claude/commands/` | `~/.claude/skills/` |
 | Codex | `~/.codex/AGENTS.md` | `~/.codex/prompts/` | `~/.agents/skills/` |
-| Pi | `~/.pi/agent/AGENTS.md` | `~/.pi/agent/prompts/` | `~/.pi/agent/skills/` |
+| Pi | `~/.pi/agent/AGENTS.md` | `~/.pi/agent/prompts/` | reads `~/.agents/skills/` |
+
+Rules are concatenated into each agent's native single-file location. Skills are
+written to only **two** directories — `~/.agents/skills/` (read by opencode,
+Codex, and Pi) and `~/.claude/skills/` (read by Claude Code) — because each
+harness scans several skills directories at once and duplicate skill names across
+them collide.
 
 Requires `git` and Python 3.
 
@@ -56,6 +62,12 @@ Optional alias: `alias ai-rules='python3 ~/.ai-rules/src/sync_ai_rules.py'`.
   warning, add the suggested `project_doc_max_bytes` line to `~/.codex/config.toml`.
 - Codex custom prompts (`~/.codex/prompts/`) are deprecated by Codex; skills are the
   durable mechanism and are distributed to all agents.
+- opencode reads rules natively from `~/.config/opencode/AGENTS.md`. If your
+  `~/.config/opencode/opencode.jsonc` still lists `docs/*.md` under `instructions`,
+  remove that entry — otherwise the rules load twice.
+- Skills removed from `skills/` are pruned from both skills directories on sync. The
+  script also removes the legacy `~/.config/opencode/docs/`, `~/.config/opencode/skills/`,
+  `~/.claude/rules/`, and `~/.pi/agent/skills/` directories it created previously.
 
 ## General Meta-Prompts
 

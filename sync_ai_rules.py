@@ -5,18 +5,27 @@ Canonical source: https://github.com/doberkofler/awesome-ai-prompts
 
 The same content is written to each supported agent's user-level location:
 
-  opencode    rules:    ~/.config/opencode/docs/*.md        (per topic)
+  opencode    rules:    ~/.config/opencode/AGENTS.md       (concatenated)
               commands: ~/.config/opencode/commands/*.md
-              skills:   ~/.config/opencode/skills/<name>/
-  Claude Code rules:    ~/.claude/rules/*.md                (per topic)
+              skills:   reads ~/.agents/skills/<name>/
+  Claude Code rules:    ~/.claude/CLAUDE.md                 (concatenated)
               commands: ~/.claude/commands/*.md
               skills:   ~/.claude/skills/<name>/
-  Codex       rules:    ~/.codex/AGENTS.md                   (concatenated)
-              commands: ~/.codex/prompts/*.md                (deprecated by Codex)
+  Codex       rules:    ~/.codex/AGENTS.md                  (concatenated)
+              commands: ~/.codex/prompts/*.md               (deprecated by Codex)
               skills:   ~/.agents/skills/<name>/
-  Pi          rules:    ~/.pi/agent/AGENTS.md                (concatenated)
+  Pi          rules:    ~/.pi/agent/AGENTS.md               (concatenated)
               commands: ~/.pi/agent/prompts/*.md
-              skills:   ~/.pi/agent/skills/<name>/
+              skills:   reads ~/.agents/skills/<name>/
+
+Skills are written to only two locations, because each harness scans several
+directories at once and duplicate skill names across them collide:
+
+  ~/.agents/skills   read by opencode, Codex, and Pi
+  ~/.claude/skills   read by Claude Code
+
+Everything else is per-harness; there is no cross-agent standard for rules or
+commands.
 
 Usage:
     python3 sync_ai_rules.py            # pull latest and distribute
@@ -39,31 +48,44 @@ STATE_FILE = Path.home() / ".ai-rules" / "installed"
 HOME = Path.home()
 TARGETS = {
     "opencode": {
-        "docs": HOME / ".config" / "opencode" / "docs",
+        "rules": HOME / ".config" / "opencode" / "AGENTS.md",
         "commands": HOME / ".config" / "opencode" / "commands",
-        "skills": HOME / ".config" / "opencode" / "skills",
+        "skills": HOME / ".agents" / "skills",
     },
     "claude": {
-        "docs": HOME / ".claude" / "rules",
+        "rules": HOME / ".claude" / "CLAUDE.md",
         "commands": HOME / ".claude" / "commands",
         "skills": HOME / ".claude" / "skills",
     },
     "codex": {
-        "agents": HOME / ".codex" / "AGENTS.md",
+        "rules": HOME / ".codex" / "AGENTS.md",
         "commands": HOME / ".codex" / "prompts",
         "skills": HOME / ".agents" / "skills",
         "config": HOME / ".codex" / "config.toml",
     },
     "pi": {
-        "agents": HOME / ".pi" / "agent" / "AGENTS.md",
+        "rules": HOME / ".pi" / "agent" / "AGENTS.md",
         "commands": HOME / ".pi" / "agent" / "prompts",
-        "skills": HOME / ".pi" / "agent" / "skills",
+        "skills": HOME / ".agents" / "skills",
     },
 }
 
-CONCAT_AGENTS = ("codex", "pi")
-PER_TOPIC_AGENTS = ("opencode", "claude")
 ALL_AGENTS = ("opencode", "claude", "codex", "pi")
+
+# The only two skills directories to write, and the legacy dirs this script
+# created before they were consolidated. Obsolete dirs are removed on sync.
+SKILL_TARGETS = (
+    HOME / ".agents" / "skills",
+    HOME / ".claude" / "skills",
+)
+OBSOLETE_SKILL_DIRS = (
+    HOME / ".config" / "opencode" / "skills",
+    HOME / ".pi" / "agent" / "skills",
+)
+OBSOLETE_RULE_DIRS = (
+    HOME / ".config" / "opencode" / "docs",
+    HOME / ".claude" / "rules",
+)
 
 CODEX_DEFAULT_MAX_BYTES = 32768
 CODEX_RECOMMENDED_MAX_BYTES = 65536
@@ -141,6 +163,30 @@ def doc_files(repo: Path) -> list[Path]:
     return sorted(p for p in docs.glob("*.md") if p.is_file())
 
 
+def skill_dirs(repo: Path) -> list[Path]:
+    src = repo / "skills"
+    if not src.is_dir():
+        return []
+    return [
+        d for d in sorted(src.iterdir()) if d.is_dir() and not d.name.startswith(".")
+    ]
+
+
+def command_files(repo: Path) -> list[Path]:
+    src = repo / "commands"
+    if not src.is_dir():
+        return []
+    return sorted(p for p in src.glob("*.md") if p.is_file())
+
+
+def count_files(directory: Path) -> int:
+    return sum(
+        1
+        for p in directory.rglob("*")
+        if p.is_file() and p.name != ".DS_Store"
+    )
+
+
 def copy_file(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
@@ -149,54 +195,81 @@ def copy_file(src: Path, dst: Path) -> None:
 def distribute_rules(repo: Path, sha: str) -> str:
     docs = doc_files(repo)
 
-    for agent in PER_TOPIC_AGENTS:
-        dest = TARGETS[agent]["docs"]
-        dest.mkdir(parents=True, exist_ok=True)
-        for f in docs:
-            copy_file(f, dest / f.name)
-        print(f"rules  -> {dest} ({len(docs)} files)")
-
     parts = [f"<!-- awesome-ai-prompts {sha} -->", ""]
     for f in docs:
         parts.append(f.read_text(encoding="utf-8").rstrip() + "\n")
     combined = "\n".join(parts)
 
-    for agent in CONCAT_AGENTS:
-        dest = TARGETS[agent]["agents"]
+    for agent in ALL_AGENTS:
+        dest = TARGETS[agent]["rules"]
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(combined, encoding="utf-8")
-        print(f"rules  -> {dest} ({len(combined.encode('utf-8'))} bytes)")
+        print(f"rules  -> {dest}")
 
     return combined
 
 
-def distribute_skills(repo: Path) -> None:
-    src = repo / "skills"
-    if not src.is_dir():
-        return
-    skills = [d for d in sorted(src.iterdir()) if d.is_dir() and not d.name.startswith(".")]
-    for agent in ALL_AGENTS:
-        dest = TARGETS[agent]["skills"]
+def distribute_skills(repo: Path) -> tuple[int, int]:
+    skills = skill_dirs(repo)
+    names = {s.name for s in skills}
+    ignore = shutil.ignore_patterns(".DS_Store")
+    total_files = sum(count_files(s) for s in skills)
+
+    for dest in SKILL_TARGETS:
         dest.mkdir(parents=True, exist_ok=True)
+        for child in sorted(dest.iterdir()):
+            if child.is_dir() and child.name not in names:
+                shutil.rmtree(child)
         for skill in skills:
             target = dest / skill.name
             if target.exists():
                 shutil.rmtree(target)
-            shutil.copytree(skill, target)
-        print(f"skills -> {dest} ({len(skills)} dirs)")
+            shutil.copytree(skill, target, ignore=ignore)
+        print(f"skills -> {dest} ({len(skills)} skills)")
+
+    return len(skills), total_files
 
 
-def distribute_commands(repo: Path) -> None:
-    src = repo / "commands"
-    if not src.is_dir():
-        return
-    files = sorted(p for p in src.glob("*.md") if p.is_file())
+def distribute_commands(repo: Path) -> int:
+    files = command_files(repo)
     for agent in ALL_AGENTS:
         dest = TARGETS[agent]["commands"]
         dest.mkdir(parents=True, exist_ok=True)
         for f in files:
             copy_file(f, dest / f.name)
         print(f"cmds   -> {dest} ({len(files)} files)")
+    return len(files)
+
+
+def remove_managed_docs(directory: Path, managed: set[str]) -> bool:
+    leftovers = []
+    for entry in sorted(directory.iterdir()):
+        if entry.is_file() and (entry.name in managed or entry.name == ".DS_Store"):
+            entry.unlink()
+        else:
+            leftovers.append(entry)
+    if not any(directory.iterdir()):
+        directory.rmdir()
+        print(f"cleanup -> removed {directory}")
+        return True
+    if leftovers:
+        kept = ", ".join(sorted(p.name for p in leftovers))
+        print(f"NOTE: {directory} kept (unmanaged entries remain): {kept}")
+    return False
+
+
+def cleanup_obsolete(repo: Path) -> int:
+    removed = 0
+    for directory in OBSOLETE_SKILL_DIRS:
+        if directory.is_dir():
+            shutil.rmtree(directory)
+            print(f"cleanup -> removed {directory}")
+            removed += 1
+    managed = {p.name for p in doc_files(repo)}
+    for directory in OBSOLETE_RULE_DIRS:
+        if directory.is_dir() and remove_managed_docs(directory, managed):
+            removed += 1
+    return removed
 
 
 def read_codex_max_bytes(config: Path) -> int:
@@ -214,7 +287,7 @@ def read_codex_max_bytes(config: Path) -> int:
 
 
 def warn_codex_size(combined: str) -> None:
-    path = TARGETS["codex"]["agents"]
+    path = TARGETS["codex"]["rules"]
     size = len(combined.encode("utf-8"))
     limit = read_codex_max_bytes(TARGETS["codex"]["config"])
     if size >= limit:
@@ -229,15 +302,63 @@ def write_state(repo: Path) -> None:
     STATE_FILE.write_text(git_short_sha(repo) + "\n", encoding="utf-8")
 
 
+def plural(count: int, singular: str, plural_form: str | None = None) -> str:
+    word = singular if count == 1 else (plural_form or singular + "s")
+    return f"{count} {word}"
+
+
+def print_inventory(repo: Path) -> None:
+    skills = skill_dirs(repo)
+    docs = doc_files(repo)
+    commands = command_files(repo)
+    print("inventory")
+    print(f"  rules     {plural(len(docs), 'doc')}")
+    print(f"  skills    {plural(len(skills), 'skill')}")
+    print(f"  commands  {plural(len(commands), 'command')}")
+
+
+def print_summary(
+    repo: Path,
+    docs: int,
+    combined: str,
+    skills: int,
+    skill_files: int,
+    commands: int,
+    cleanup: int,
+) -> None:
+    rule_bytes = len(combined.encode("utf-8"))
+    print()
+    print("summary")
+    print(
+        f"  rules     {plural(docs, 'doc')} -> "
+        f"{len(ALL_AGENTS)} locations ({rule_bytes} bytes each)"
+    )
+    print(
+        f"  skills    {plural(skills, 'skill')} ({plural(skill_files, 'file')}) -> "
+        f"{len(SKILL_TARGETS)} locations"
+    )
+    print(f"  commands  {plural(commands, 'command')} -> {len(ALL_AGENTS)} locations")
+    print(f"  cleanup   {plural(cleanup, 'path')} removed")
+    for skill in skill_dirs(repo):
+        print(f"              {skill.name}: {plural(count_files(skill), 'file')}")
+
+
 def do_sync() -> int:
     repo = resolve_repo(pull=True)
     sha = git_short_sha(repo)
     print(f"source: {repo} @ {sha}\n")
     combined = distribute_rules(repo, sha)
-    distribute_skills(repo)
-    distribute_commands(repo)
+    skills, skill_files = distribute_skills(repo)
+    commands = distribute_commands(repo)
+    cleanup = cleanup_obsolete(repo)
     warn_codex_size(combined)
     write_state(repo)
+    print_summary(repo, len(doc_files(repo)), combined, skills, skill_files, commands, cleanup)
+    print(
+        "\nNOTE: opencode loads rules from ~/.config/opencode/AGENTS.md. If "
+        "~/.config/opencode/opencode.jsonc still lists docs/*.md under "
+        '"instructions", remove that entry so rules do not load twice.'
+    )
     print(f"\nrecorded {sha} in {STATE_FILE}")
     print("done.")
     return 0
@@ -262,9 +383,11 @@ def do_check() -> int:
     print(f"upstream:  {upstream_sha}")
     if installed == upstream_sha:
         print("status:    up to date")
-        return 0
-    print("status:    OUT OF DATE - run: python3 ~/.ai-rules/src/sync_ai_rules.py")
-    return 1
+    else:
+        print("status:    OUT OF DATE - run: python3 ~/.ai-rules/src/sync_ai_rules.py")
+    print()
+    print_inventory(repo)
+    return 0 if installed == upstream_sha else 1
 
 
 def main() -> int:

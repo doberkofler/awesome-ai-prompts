@@ -17,6 +17,7 @@ Currently, this repository consists of Markdown documentation and prompt protoco
   - Files in the `commands/` directory MUST have valid YAML frontmatter.
   - The `description` field should be a single, high-impact sentence.
   - The `agent` field must be one of the specified sub-agent types.
+  - Every `skills/<name>/SKILL.md` must have frontmatter whose `name` equals its directory name, and a `description` no longer than 1024 characters.
 - **Link Checking:** 
   - Ensure all internal links in `README.md` and `commands/` are functional.
   - Use relative paths for local files (e.g., `[label](commands/dev-reset.md)`).
@@ -24,6 +25,9 @@ Currently, this repository consists of Markdown documentation and prompt protoco
 - **Consistency Verification:**
   - Check that new prompts do not duplicate functionality of existing prompts.
   - Ensure that if a prompt is referenced by a command, that command exists and is documented.
+  - Ensure every skill referenced by another skill (e.g. `grill-me` → `grilling`) exists in `skills/`.
+- **Distribution:**
+  - After changing `docs/`, `commands/`, or `skills/`, run `python3 sync_ai_rules.py --check` and require `status: up to date` before finishing.
 - **Single File "Test":** 
   - To "test" a new prompt, perform a dry run of its instructions. 
   - Verify that constraints are mutually exclusive and collectively exhaustive (MECE).
@@ -39,6 +43,7 @@ Since the "code" here consists of prompts, follow these structural and stylistic
 - **Asset Naming:** Images in `media/` should be lowercase and descriptive (e.g., `logo.svg`).
 - **Directories:** 
   - `commands/`: Specific, actionable meta-protocols that an agent can "run".
+  - `skills/`: Agent Skills (`<name>/SKILL.md`), distributed by `sync_ai_rules.py`.
   - `media/`: Images, icons, and visual assets.
   - Root: General lists, indices, and high-level documentation.
 
@@ -52,6 +57,22 @@ agent: [plan | execute | all]
 ```
 - **description:** Explain the "why" and "what" of the protocol. It should be written in the third person.
 - **agent:** Specify which sub-agent should trigger this prompt. This helps the orchestrator route the task correctly.
+
+### Skills
+Every skill is a directory `skills/<name>/` containing a `SKILL.md`. The directory name, the frontmatter `name`, and the invocation name must all match.
+
+```yaml
+---
+name: kebab-case-name
+description: What the skill does and when to use it. Use when [specific triggers].
+disable-model-invocation: true   # only for user-invoked skills
+---
+```
+
+- **name:** Lowercase alphanumeric with single hyphens; must equal the directory name.
+- **description:** The only text always in context. It is the trigger: front-load the use case, state when to invoke, keep it within 1024 characters.
+- **disable-model-invocation:** Set to `true` for skills only the user should trigger (no always-loaded description). Omit for model-invoked skills.
+- **Bundled files:** Reference sibling files (e.g. `CONTEXT-FORMAT.md`) with relative links; copy the whole directory, never a lone `SKILL.md`.
 
 ### Writing Style for Prompts
 - **Imperative Voice:** Use strong, direct verbs. Start instructions with "STOP.", "Identify.", "Search.", or "Verify.".
