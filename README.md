@@ -68,6 +68,11 @@ Optional alias: `alias ai-rules='python3 ~/.ai-rules/src/sync_ai_rules.py'`.
 - Skills removed from `skills/` are pruned from both skills directories on sync. The
   script also removes the legacy `~/.config/opencode/docs/`, `~/.config/opencode/skills/`,
   `~/.claude/rules/`, and `~/.pi/agent/skills/` directories it created previously.
+- Skills that model the domain (`domain-modeling`, `grill-with-docs`, `wait-what`,
+  `tdd`, `diagnosing-bugs`) assume `CONTEXT.md` and `docs/adr/` at the repo root, or
+  `CONTEXT-MAP.md` pointing to per-context `CONTEXT.md` files. Create them lazily.
+- Skills are adapted from [mattpocock/skills](https://github.com/mattpocock/skills) and
+  kept flattened as `skills/<name>/`.
 
 ## General Meta-Prompts
 

@@ -212,7 +212,7 @@ def distribute_rules(repo: Path, sha: str) -> str:
 def distribute_skills(repo: Path) -> tuple[int, int]:
     skills = skill_dirs(repo)
     names = {s.name for s in skills}
-    ignore = shutil.ignore_patterns(".DS_Store")
+    ignore = shutil.ignore_patterns(".DS_Store", "agents")
     total_files = sum(count_files(s) for s in skills)
 
     for dest in SKILL_TARGETS:

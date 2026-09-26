@@ -73,6 +73,10 @@ disable-model-invocation: true   # only for user-invoked skills
 - **description:** The only text always in context. It is the trigger: front-load the use case, state when to invoke, keep it within 1024 characters.
 - **disable-model-invocation:** Set to `true` for skills only the user should trigger (no always-loaded description). Omit for model-invoked skills.
 - **Bundled files:** Reference sibling files (e.g. `CONTEXT-FORMAT.md`) with relative links; copy the whole directory, never a lone `SKILL.md`.
+- **Invocation:** A user-invoked skill sets `disable-model-invocation: true` and may reach model-invoked skills, never another user-invoked skill. A model-invoked skill keeps a `description` and may be reached by the agent, the user, or other skills.
+- **Domain docs:** Skills that model the domain (`domain-modeling`, `grill-with-docs`, `wait-what`, `tdd`, `diagnosing-bugs`) assume the convention `CONTEXT.md` (glossary) and `docs/adr/` (decisions) at the repo root, or `CONTEXT-MAP.md` pointing to per-context `CONTEXT.md` files. Create them lazily; never put implementation detail in `CONTEXT.md`.
+- **Agent runtime:** Some skills delegate to sub-agents (`research` to a background agent; `codebase-design` design-it-twice and, upstream, `code-review` to parallel agents). If the runtime cannot background a task, run it as a normal sub-agent and say so.
+- **Upstream:** Skills are adapted from <https://github.com/mattpocock/skills>. Keep them flattened as `skills/<name>/`; do not copy upstream's per-skill `agents/` sidecars.
 
 ### Writing Style for Prompts
 - **Imperative Voice:** Use strong, direct verbs. Start instructions with "STOP.", "Identify.", "Search.", or "Verify.".
