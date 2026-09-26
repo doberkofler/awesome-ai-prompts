@@ -88,6 +88,10 @@ Optional alias: `alias ai-rules='python3 ~/.ai-rules/src/sync_ai_rules.py'`.
 
 ### opencode - commands
 
+- [dev-decompose.md](commands/dev-decompose.md) - Decomposes a researched plan into
+  wave-ordered, self-contained task specs
+- [dev-find-reinventions.md](commands/dev-find-reinventions.md) - Finds internal
+  duplication and reinvented builtin/framework/npm functionality
 - [dev-reset.md](commands/dev-reset.md) - A formalized epistemic reset protocol
 - [dev-verimode.md](commands/dev-verimode.md) - A verification-first, documentation-grounded response protocol
 
