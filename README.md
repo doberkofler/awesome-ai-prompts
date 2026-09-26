@@ -62,9 +62,10 @@ Optional alias: `alias ai-rules='python3 ~/.ai-rules/src/sync_ai_rules.py'`.
   warning, add the suggested `project_doc_max_bytes` line to `~/.codex/config.toml`.
 - Codex custom prompts (`~/.codex/prompts/`) are deprecated by Codex; skills are the
   durable mechanism and are distributed to all agents.
-- opencode reads rules natively from `~/.config/opencode/AGENTS.md`. If your
-  `~/.config/opencode/opencode.jsonc` still lists `docs/*.md` under `instructions`,
-  remove that entry — otherwise the rules load twice.
+- opencode combines synced rules from `~/.config/opencode/AGENTS.md` with matching
+  `instructions`. Remove `docs/*.md` from both the global and project `opencode.jsonc`
+  when using these synced rules; relative patterns resolve from the project directory
+  and otherwise load the same rules twice.
 - Skills removed from `skills/` are pruned from both skills directories on sync. The
   script also removes the legacy `~/.config/opencode/docs/`, `~/.config/opencode/skills/`,
   `~/.claude/rules/`, and `~/.pi/agent/skills/` directories it created previously.

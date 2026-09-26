@@ -36,6 +36,7 @@ Network access is required to clone/pull. Offline runs reuse the local copy.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -89,6 +90,9 @@ OBSOLETE_RULE_DIRS = (
 
 CODEX_DEFAULT_MAX_BYTES = 32768
 CODEX_RECOMMENDED_MAX_BYTES = 65536
+OPENCODE_DOCS_INSTRUCTION = re.compile(
+    r'"instructions"\s*:\s*\[[^\]]*"docs/\*\.md"'
+)
 
 
 def run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -123,6 +127,36 @@ def pull_repo(repo: Path) -> None:
         text = (result.stdout or result.stderr).strip()
         if text:
             print(text)
+
+
+def opencode_docs_instruction_configs(repo: Path) -> list[Path]:
+    configs = (
+        HOME / ".config" / "opencode" / "opencode.json",
+        HOME / ".config" / "opencode" / "opencode.jsonc",
+        repo / "opencode.json",
+        repo / "opencode.jsonc",
+    )
+    matches = []
+    for config in configs:
+        try:
+            text = config.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        if OPENCODE_DOCS_INSTRUCTION.search(text):
+            matches.append(config)
+    return matches
+
+
+def warn_opencode_duplicate_rules(repo: Path) -> None:
+    configs = opencode_docs_instruction_configs(repo)
+    if not configs:
+        return
+    print(
+        "\nNOTE: opencode combines ~/.config/opencode/AGENTS.md with matching "
+        'files from "instructions". Remove docs/*.md from:'
+    )
+    for config in configs:
+        print(f"    {config}")
 
 
 def clone_cache() -> Path:
@@ -318,29 +352,21 @@ def print_inventory(repo: Path) -> None:
 
 
 def print_summary(
-    repo: Path,
     docs: int,
-    combined: str,
     skills: int,
     skill_files: int,
     commands: int,
     cleanup: int,
 ) -> None:
-    rule_bytes = len(combined.encode("utf-8"))
     print()
     print("summary")
-    print(
-        f"  rules     {plural(docs, 'doc')} -> "
-        f"{len(ALL_AGENTS)} locations ({rule_bytes} bytes each)"
-    )
+    print(f"  rules     {plural(docs, 'doc')} -> {len(ALL_AGENTS)} locations")
     print(
         f"  skills    {plural(skills, 'skill')} ({plural(skill_files, 'file')}) -> "
         f"{len(SKILL_TARGETS)} locations"
     )
     print(f"  commands  {plural(commands, 'command')} -> {len(ALL_AGENTS)} locations")
     print(f"  cleanup   {plural(cleanup, 'path')} removed")
-    for skill in skill_dirs(repo):
-        print(f"              {skill.name}: {plural(count_files(skill), 'file')}")
 
 
 def do_sync() -> int:
@@ -353,12 +379,8 @@ def do_sync() -> int:
     cleanup = cleanup_obsolete(repo)
     warn_codex_size(combined)
     write_state(repo)
-    print_summary(repo, len(doc_files(repo)), combined, skills, skill_files, commands, cleanup)
-    print(
-        "\nNOTE: opencode loads rules from ~/.config/opencode/AGENTS.md. If "
-        "~/.config/opencode/opencode.jsonc still lists docs/*.md under "
-        '"instructions", remove that entry so rules do not load twice.'
-    )
+    print_summary(len(doc_files(repo)), skills, skill_files, commands, cleanup)
+    warn_opencode_duplicate_rules(repo)
     print(f"\nrecorded {sha} in {STATE_FILE}")
     print("done.")
     return 0
