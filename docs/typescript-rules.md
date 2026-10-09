@@ -73,29 +73,38 @@ runtime boundaries, modules, naming, and API documentation.
 
 ### Semantic safety
 
-Enforce these language constraints through Oxlint:
+Enforce these language constraints through Oxlint. Each closes a failure mode that the
+type checker alone does not:
 
-- Use strict equality and an explicit radix.
-- Use `const` by default and never use `var`.
-- Reject `eval`, implied evaluation, `new Function`, `with`, and native-object
-  extension.
-- Throw `Error` objects rather than literals.
-- Reject variable shadowing and invalid derived-class construction.
-- Keep direct environment access inside the project's runtime boundary.
-- Reject floating and misused promises, unsafe `any` operations, array deletion,
-  dynamic property deletion, unnecessary assertions and constraints, duplicate union
-  constituents, wrapper object types, invalid thrown values, and unbound methods.
-- Require explicit module-boundary types and explicit member accessibility.
+- **Coercion safety**: use strict equality and an explicit radix; reject implicit
+  coercion except explicit boolean coercion with `!!`.
+- **Control-flow safety**: use `const` by default and never `var`; reject variable
+  shadowing and invalid derived-class construction.
+- **Code-execution security**: reject `eval`, implied evaluation, `new Function`, `with`,
+  and native-object extension.
+- **Promise handling**: reject floating and misused promises.
+- **`any` containment**: reject unsafe `any` operations and unnecessary assertions and
+  constraints.
+- **Error contracts**: throw `Error` objects rather than literals and reject invalid
+  thrown values.
+- **Import emission**: require one declaration per module with inline type specifiers.
+- **Module and configuration boundaries**: require explicit module-boundary types and
+  explicit member accessibility, and keep direct environment access inside the project's
+  runtime boundary.
+- Reject array deletion, dynamic property deletion, duplicate union constituents, wrapper
+  object types, and unbound methods.
 
-Treat complexity limits as advisory signals, not correctness failures. Default warning
-thresholds are complexity 30, nesting depth 10, 1,300 lines, 10 parameters, 150
-statements, and 10 nested callbacks. Projects may override these thresholds explicitly.
+Readability and architecture rules are guidance, not correctness rules, and stay separate
+so each can be weighed rather than treated as a defect:
 
-Use conventional rather than Yoda conditions, declare variables at the top of their
-scope, use property dot notation except for snake-case keys, and reject implicit
-coercion except explicit boolean coercion with `!!`. Report `prefer-const` as a warning.
-Do not require template literals, object shorthand, spread syntax, import sorting, or
-bans on increments and numeric literals.
+- Treat complexity limits as advisory signals, not correctness failures. Default warning
+  thresholds are complexity 30, nesting depth 10, 1,300 lines, 10 parameters, 150
+  statements, and 10 nested callbacks. Projects may override these thresholds explicitly.
+- Prefer conventional over Yoda conditions, declare variables near their first use, and
+  use property dot notation except for snake-case keys. Report `prefer-const` as a warning.
+- Keep import grouping and ordering; it makes large import blocks navigable at review time.
+- Do not require template literals, object shorthand, spread syntax, or bans on increments
+  and numeric literals.
 
 ### Suppressions
 
@@ -187,7 +196,8 @@ export const loadUser = (userId: UserId): Promise<User> => { /* ... */ };
 ## Best Practices
 
 - Use `??` and `?.` where appropriate — never use `||` as a null-coalescing substitute (it conflates `null`/`undefined` with falsy).
-- Prefix unused variables with `_` (e.g., `_unusedParam`).
+- Prefix only intentionally unused parameters with `_` (e.g., `_unusedParam`); remove unused
+  local variables so `noUnusedLocals` fails the build instead of hiding them.
 - `const` for everything that isn't reassigned, `let` otherwise. Never `var`.
 - Return the Promise directly. Use `return await` only when it changes `try`/`catch`/`finally` behavior.
 - Always use curly braces for control flow, even single-line.

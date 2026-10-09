@@ -176,6 +176,11 @@ scoping, and the replacement invariant that disables a base rule only where its
 type-aware replacement is enabled in the same scope. Projects may replace a baseline rule
 only with an explicit scoped override and reason, and no override may lower coverage,
 lower a rule's severity, or disable a rule without an enabled replacement in that scope.
+`typescript-rules.md` also classifies its non-formatting rules: each correctness or
+security rule states the failure mode it closes, while readability and architecture
+rules (Yoda conditions, declaration placement, complexity thresholds, import grouping)
+are documented as guidance rather than defects. Classification clarifies intent; it does
+not remove or downgrade any rule.
 
 The domain-oriented skills intentionally use `CONTEXT.md` and `CONTEXT-MAP.md` for
 glossaries and `docs/adr/` for decisions. This differs from upstream's current
