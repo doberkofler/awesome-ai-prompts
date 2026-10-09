@@ -1,8 +1,7 @@
-"""Characterization tests for the current ``sync_ai_rules.py`` behavior.
+"""Behavior tests for ``sync_ai_rules.py`` explicit-ownership distribution.
 
-These tests pin the behavior that exists today so later phases can change it
-deliberately. Behaviors that are known to be unsafe are flagged in the test
-docstring with the phase that is expected to replace them.
+The tests run the real installer against an isolated temporary ``HOME`` and a
+temporary fixture source tree, so they never touch the operator's configuration.
 """
 from __future__ import annotations
 
@@ -14,6 +13,8 @@ from tests import harness
 from tests.harness import InstallerFixture
 
 SKILL_PRIMARY = harness.SKILL_DIRS[0]
+BLOCK_BEGIN = "<!-- BEGIN awesome-ai-prompts (managed) -->"
+BLOCK_END = "<!-- END awesome-ai-prompts -->"
 
 
 class InstallerTestCase(unittest.TestCase):
@@ -38,7 +39,8 @@ class EmptyInstallationTests(InstallerTestCase):
 
         for agent in harness.RULE_PATHS:
             text = self.fx.rules(agent).read_text(encoding="utf-8")
-            self.assertIn("awesome-ai-prompts", text)
+            self.assertIn(BLOCK_BEGIN, text)
+            self.assertIn(BLOCK_END, text)
             self.assertIn("# Rules", text)
 
         for agent in harness.COMMAND_DIRS:
@@ -49,17 +51,15 @@ class EmptyInstallationTests(InstallerTestCase):
                 (self.fx.skill(directory, "alpha") / "SKILL.md").is_file()
             )
 
-        self.assertEqual(
-            ["alpha"], self.fx.managed_skills_file().read_text().split()
-        )
-        self.assertTrue(self.fx.installed_state_file().is_file())
+        self.assertTrue(self.fx.manifest_file().is_file())
 
-    def test_skill_sidecars_and_ds_store_are_excluded(self) -> None:
+    def test_skill_sidecars_excluded_only_at_skill_root(self) -> None:
         self.fx.set_skill(
             "alpha",
             {
                 "SKILL.md": "---\nname: alpha\ndescription: A.\n---\nbody\n",
-                "agents/helper.md": "helper\n",
+                "agents/helper.md": "sidecar\n",
+                "nested/agents/keep.md": "nested\n",
                 ".DS_Store": "junk\n",
             },
         )
@@ -67,6 +67,7 @@ class EmptyInstallationTests(InstallerTestCase):
         target = self.fx.skill(SKILL_PRIMARY, "alpha")
         self.assertTrue((target / "SKILL.md").is_file())
         self.assertFalse((target / "agents").exists())
+        self.assertTrue((target / "nested" / "agents" / "keep.md").is_file())
         self.assertFalse((target / ".DS_Store").exists())
 
     def test_repeated_runs_are_idempotent(self) -> None:
@@ -94,12 +95,18 @@ class ManagedSkillTests(InstallerTestCase):
         self.assertEqual(0, self.fx.run().returncode)
         self.assertIn("version two", target.read_text(encoding="utf-8"))
 
-    def test_local_drift_of_managed_skill_is_overwritten(self) -> None:
-        """Current behavior. Phase 3 should refuse until the user approves."""
+    def test_local_drift_of_managed_skill_is_refused_then_forced(self) -> None:
         self.assertEqual(0, self.fx.run().returncode)
         target = self.fx.skill(SKILL_PRIMARY, "alpha") / "SKILL.md"
         target.write_text("LOCAL DRIFT\n", encoding="utf-8")
-        self.assertEqual(0, self.fx.run().returncode)
+
+        refused = self.fx.run()
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("locally modified skill", refused.stderr)
+        self.assertEqual("LOCAL DRIFT\n", target.read_text(encoding="utf-8"))
+
+        forced = self.fx.run("--force")
+        self.assertEqual(0, forced.returncode, forced.stderr)
         self.assertNotIn("LOCAL DRIFT", target.read_text(encoding="utf-8"))
 
     def test_removed_managed_skill_is_pruned_and_unmanaged_survives(self) -> None:
@@ -119,9 +126,8 @@ class ManagedSkillTests(InstallerTestCase):
         for directory in harness.SKILL_DIRS:
             self.assertFalse(self.fx.skill(directory, "beta").exists())
         self.assertTrue((unmanaged / "SKILL.md").is_file())
-        self.assertEqual(
-            ["alpha"], self.fx.managed_skills_file().read_text().split()
-        )
+        managed = self.fx.manifest()["files"]
+        self.assertNotIn(".agents/skills/gamma/SKILL.md", managed)
 
     def test_unmanaged_skill_collision_is_refused(self) -> None:
         clash = self.fx.home / Path(".agents/skills") / "alpha"
@@ -135,48 +141,84 @@ class ManagedSkillTests(InstallerTestCase):
         self.assertEqual("LOCAL\n", (clash / "SKILL.md").read_text(encoding="utf-8"))
 
 
-class RulesAndCommandTests(InstallerTestCase):
-    def test_unmanaged_rules_file_is_overwritten(self) -> None:
-        """Current behavior. Phase 3 should refuse to replace unmanaged rules."""
+class RulesTests(InstallerTestCase):
+    def test_unmanaged_rules_file_is_preserved_with_managed_block(self) -> None:
         for agent in harness.RULE_PATHS:
             path = self.fx.rules(agent)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("LOCAL RULES\n", encoding="utf-8")
+            path.write_text("# LOCAL RULES\n", encoding="utf-8")
 
-        self.assertEqual(0, self.fx.run().returncode)
+        result = self.fx.run()
+        self.assertEqual(0, result.returncode, result.stderr)
 
         for agent in harness.RULE_PATHS:
             text = self.fx.rules(agent).read_text(encoding="utf-8")
-            self.assertNotIn("LOCAL RULES", text)
+            self.assertIn("# LOCAL RULES", text)
+            self.assertIn(BLOCK_BEGIN, text)
             self.assertIn("# Rules", text)
 
-    def test_managed_rules_file_is_refreshed(self) -> None:
+    def test_managed_rules_block_is_refreshed_preserving_surrounding_content(
+        self,
+    ) -> None:
         self.assertEqual(0, self.fx.run().returncode)
+        path = self.fx.rules("opencode")
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            "# Personal\n\n" + text + "\n# Trailing\n", encoding="utf-8"
+        )
         self.fx.set_doc("rules.md", "# Rules\n\nUpdated body.\n")
-        self.assertEqual(0, self.fx.run().returncode)
-        for agent in harness.RULE_PATHS:
-            self.assertIn(
-                "Updated body.", self.fx.rules(agent).read_text(encoding="utf-8")
-            )
 
-    def test_unmanaged_command_is_overwritten(self) -> None:
-        """Current behavior. Phase 3 should refuse to replace unmanaged files."""
+        self.assertEqual(0, self.fx.run().returncode)
+
+        updated = path.read_text(encoding="utf-8")
+        self.assertIn("# Personal", updated)
+        self.assertIn("# Trailing", updated)
+        self.assertIn("Updated body.", updated)
+        self.assertEqual(1, updated.count(BLOCK_BEGIN))
+        self.assertEqual(1, updated.count(BLOCK_END))
+
+    def test_locally_modified_rules_block_is_refused_then_forced(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        path = self.fx.rules("opencode")
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("Body.", "LOCAL EDIT"),
+            encoding="utf-8",
+        )
+
+        refused = self.fx.run()
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("locally modified rules block", refused.stderr)
+        self.assertIn("LOCAL EDIT", path.read_text(encoding="utf-8"))
+
+        forced = self.fx.run("--force")
+        self.assertEqual(0, forced.returncode, forced.stderr)
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("LOCAL EDIT", text)
+        self.assertIn("Body.", text)
+
+
+class CommandTests(InstallerTestCase):
+    def test_unmanaged_command_is_refused(self) -> None:
         for agent in harness.COMMAND_DIRS:
             directory = self.fx.commands_dir(agent)
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "cmd.md").write_text("LOCAL COMMAND\n", encoding="utf-8")
 
-        self.assertEqual(0, self.fx.run().returncode)
+        result = self.fx.run()
 
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("refusing to replace unmanaged command", result.stderr)
         for agent in harness.COMMAND_DIRS:
-            text = (self.fx.commands_dir(agent) / "cmd.md").read_text(
-                encoding="utf-8"
+            self.assertEqual(
+                "LOCAL COMMAND\n",
+                (self.fx.commands_dir(agent) / "cmd.md").read_text(encoding="utf-8"),
             )
-            self.assertNotIn("LOCAL COMMAND", text)
-            self.assertIn("description: C.", text)
 
-    def test_command_update_and_obsolete_command_retention(self) -> None:
+    def test_managed_command_is_updated_and_obsolete_is_removed(self) -> None:
         self.assertEqual(0, self.fx.run().returncode)
+        unmanaged = self.fx.commands_dir("opencode") / "user.md"
+        unmanaged.write_text("USER\n", encoding="utf-8")
+
         self.fx.set_command(
             "cmd.md", "---\ndescription: C2.\nagent: plan\n---\nversion two\n"
         )
@@ -187,11 +229,109 @@ class RulesAndCommandTests(InstallerTestCase):
                 (self.fx.commands_dir(agent) / "cmd.md").read_text(encoding="utf-8"),
             )
 
-        # Current behavior: commands are never pruned (Phase 4 adds removal).
         self.fx.remove_command("cmd.md")
         self.assertEqual(0, self.fx.run().returncode)
         for agent in harness.COMMAND_DIRS:
-            self.assertTrue((self.fx.commands_dir(agent) / "cmd.md").is_file())
+            self.assertFalse((self.fx.commands_dir(agent) / "cmd.md").exists())
+        self.assertEqual("USER\n", unmanaged.read_text(encoding="utf-8"))
+
+    def test_locally_modified_managed_command_is_refused_then_forced(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        target = self.fx.commands_dir("opencode") / "cmd.md"
+        target.write_text("LOCAL COMMAND\n", encoding="utf-8")
+
+        refused = self.fx.run()
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("locally modified command", refused.stderr)
+        self.assertEqual("LOCAL COMMAND\n", target.read_text(encoding="utf-8"))
+
+        forced = self.fx.run("--force")
+        self.assertEqual(0, forced.returncode, forced.stderr)
+        self.assertIn("description: C.", target.read_text(encoding="utf-8"))
+
+    def test_missing_managed_command_is_recreated(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        target = self.fx.commands_dir("opencode") / "cmd.md"
+        target.unlink()
+
+        self.assertEqual(0, self.fx.run().returncode)
+        self.assertTrue(target.is_file())
+
+
+class ManifestTests(InstallerTestCase):
+    def test_manifest_records_repo_and_content_hashes(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        manifest = self.fx.manifest()
+
+        self.assertEqual(1, manifest["version"])
+        self.assertEqual("unknown", manifest["repo"])
+
+        files = manifest["files"]
+        self.assertIn(".config/opencode/commands/cmd.md", files)
+        self.assertIn(".agents/skills/alpha/SKILL.md", files)
+        self.assertEqual(64, len(files[".agents/skills/alpha/SKILL.md"]["sha256"]))
+
+        blocks = manifest["blocks"]
+        for agent in harness.RULE_PATHS:
+            self.assertIn(str(harness.RULE_PATHS[agent]), blocks)
+            self.assertEqual(64, len(blocks[str(harness.RULE_PATHS[agent])]["sha256"]))
+
+
+class LegacyMigrationTests(InstallerTestCase):
+    def _seed_legacy_install(self) -> None:
+        ai_rules = self.fx.home / ".ai-rules"
+        ai_rules.mkdir(parents=True, exist_ok=True)
+        (ai_rules / "installed").write_text("deadbeef\n", encoding="utf-8")
+        (ai_rules / "managed-skills").write_text("alpha\n", encoding="utf-8")
+
+        for agent in harness.RULE_PATHS:
+            path = self.fx.rules(agent)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "<!-- awesome-ai-prompts deadbeef -->\n\n# Rules\n\nOLD\n",
+                encoding="utf-8",
+            )
+        for agent in harness.COMMAND_DIRS:
+            directory = self.fx.commands_dir(agent)
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "cmd.md").write_text("OLD COMMAND\n", encoding="utf-8")
+            (directory / "personal.md").write_text("MINE\n", encoding="utf-8")
+        for directory in harness.SKILL_DIRS:
+            skill = self.fx.skill(directory, "alpha")
+            skill.mkdir(parents=True, exist_ok=True)
+            (skill / "SKILL.md").write_text("OLD SKILL\n", encoding="utf-8")
+
+    def test_legacy_install_migrates_without_refusing(self) -> None:
+        self._seed_legacy_install()
+
+        result = self.fx.run()
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        for agent in harness.RULE_PATHS:
+            text = self.fx.rules(agent).read_text(encoding="utf-8")
+            self.assertIn(BLOCK_BEGIN, text)
+            self.assertNotIn("OLD", text)
+        for agent in harness.COMMAND_DIRS:
+            self.assertIn(
+                "description: C.",
+                (self.fx.commands_dir(agent) / "cmd.md").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                "MINE\n",
+                (self.fx.commands_dir(agent) / "personal.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+        for directory in harness.SKILL_DIRS:
+            self.assertIn(
+                "body",
+                (self.fx.skill(directory, "alpha") / "SKILL.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+        self.assertTrue(self.fx.manifest_file().is_file())
+        self.assertFalse((self.fx.home / ".ai-rules" / "installed").exists())
+        self.assertFalse((self.fx.home / ".ai-rules" / "managed-skills").exists())
 
 
 class HomeIsolationTests(InstallerTestCase):

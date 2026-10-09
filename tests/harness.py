@@ -8,6 +8,7 @@ tree is also a temporary fixture, so tests never clone or pull.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -102,13 +103,13 @@ class InstallerFixture:
         (self.src / "commands" / name).unlink()
 
     # -- execution -------------------------------------------------------
-    def run(self) -> subprocess.CompletedProcess[str]:
+    def run(self, *args: str) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env["HOME"] = str(self.home)
         for variable in ("XDG_CONFIG_HOME", "XDG_DATA_HOME"):
             env.pop(variable, None)
         return subprocess.run(
-            [sys.executable, str(self.src / SCRIPT_NAME)],
+            [sys.executable, str(self.src / SCRIPT_NAME), *args],
             cwd=str(self.src),
             env=env,
             capture_output=True,
@@ -125,8 +126,9 @@ class InstallerFixture:
     def skill(self, directory: Path, name: str) -> Path:
         return self.home / directory / name
 
-    def managed_skills_file(self) -> Path:
-        return self.home / ".ai-rules" / "managed-skills"
+    # -- manifest --------------------------------------------------------
+    def manifest_file(self) -> Path:
+        return self.home / ".ai-rules" / "manifest.json"
 
-    def installed_state_file(self) -> Path:
-        return self.home / ".ai-rules" / "installed"
+    def manifest(self) -> dict[str, object]:
+        return json.loads(self.manifest_file().read_text(encoding="utf-8"))

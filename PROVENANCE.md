@@ -178,16 +178,26 @@ There are two distinct operations:
 
 Running `python3 sync_ai_rules.py`:
 
-- concatenates `docs/*.md` in filename order into each agent's native global rules
-  file;
-- copies each `skills/<name>/` directory to `~/.agents/skills/` and
-  `~/.claude/skills/` while omitting `agents/` sidecars;
-- preserves unrelated shared skills and prunes only skills previously managed by this
-  repository;
-- preserves OpenCode's native `~/.config/opencode/skills/` directory and reports
-  matching native skills that override shared copies;
-- distributes commands separately to each agent's command directory;
-- records the installed repository commit under `~/.ai-rules/`.
+- concatenates `docs/*.md` in filename order into a marked repository-owned block
+  (`<!-- BEGIN/END awesome-ai-prompts -->`) inside each agent's native global rules
+  file, replacing only that block and preserving content outside it; an existing
+  rules file without the block is left intact and the block is appended;
+- copies each `skills/<name>/` payload file to `~/.agents/skills/` and
+  `~/.claude/skills/`, omitting only a top-level `agents/` sidecar directory and
+  `.DS_Store` files (a nested `agents/` directory is kept);
+- copies each command to every agent's command directory, and reports matching native
+  OpenCode skills under `~/.config/opencode/skills/` that override shared copies;
+- records every managed file and rules block, with its SHA-256, in
+  `~/.ai-rules/manifest.json`, alongside the installed repository commit.
+
+Ownership is explicit. A target path that exists but is not recorded in the manifest
+is user-owned and is never overwritten. A recorded path whose content no longer
+matches its recorded hash is locally modified; unless `--force` is given, the run
+stops before mutating anything. Pruning removes only paths recorded as managed by the
+previous manifest, so unrelated and locally added files survive installation, update,
+and removal. The first run after an upgrade migrates the previous `installed` and
+`managed-skills` files: paths the old installer managed are adopted with their current
+content as the baseline, then refreshed.
 
 The script uses user-level directories, symlinks no content, and requires no
 administrator rights. It also removes only legacy paths that earlier versions of this

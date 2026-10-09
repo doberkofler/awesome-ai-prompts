@@ -5,16 +5,16 @@ Canonical source: https://github.com/doberkofler/awesome-ai-prompts
 
 The same content is written to each supported agent's user-level location:
 
-  opencode    rules:    ~/.config/opencode/AGENTS.md       (concatenated)
+  opencode    rules:    ~/.config/opencode/AGENTS.md       (managed block)
               commands: ~/.config/opencode/commands/*.md
               skills:   reads ~/.agents/skills/<name>/
-  Claude Code rules:    ~/.claude/CLAUDE.md                 (concatenated)
+  Claude Code rules:    ~/.claude/CLAUDE.md                 (managed block)
               commands: ~/.claude/commands/*.md
               skills:   ~/.claude/skills/<name>/
-  Codex       rules:    ~/.codex/AGENTS.md                  (concatenated)
+  Codex       rules:    ~/.codex/AGENTS.md                  (managed block)
               commands: ~/.codex/prompts/*.md               (deprecated by Codex)
-              skills:   ~/.agents/skills/<name>/
-  Pi          rules:    ~/.pi/agent/AGENTS.md               (concatenated)
+              skills:   reads ~/.agents/skills/<name>/
+  Pi          rules:    ~/.pi/agent/AGENTS.md               (managed block)
               commands: ~/.pi/agent/prompts/*.md
               skills:   reads ~/.agents/skills/<name>/
 
@@ -27,24 +27,49 @@ directories at once and duplicate skill names across them collide:
 Everything else is per-harness; there is no cross-agent standard for rules or
 commands.
 
+Ownership model:
+
+  * Every distributed file is recorded with its SHA-256 in
+    ``~/.ai-rules/manifest.json``.
+  * A path that exists but is not recorded is user-owned and is never
+    overwritten.
+  * A recorded path whose content no longer matches its hash is locally
+    modified and is never overwritten unless ``--force`` is given.
+  * Only paths from the previous manifest are pruned.
+  * Global rules files receive a marked repository-owned block; all content
+    outside the block is preserved. An existing rules file without the block
+    is left intact and the block is appended.
+
 Usage:
     python3 sync_ai_rules.py            # pull latest and distribute
     python3 sync_ai_rules.py --check    # report whether the install is current
+    python3 sync_ai_rules.py --force    # overwrite locally modified managed files
 
 Network access is required to clone/pull. Offline runs reuse the local copy.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_URL = "https://github.com/doberkofler/awesome-ai-prompts.git"
 CACHE_DIR = Path.home() / ".ai-rules" / "src"
-STATE_FILE = Path.home() / ".ai-rules" / "installed"
-MANAGED_SKILLS_FILE = Path.home() / ".ai-rules" / "managed-skills"
+MANIFEST_FILE = Path.home() / ".ai-rules" / "manifest.json"
+LEGACY_STATE_FILE = Path.home() / ".ai-rules" / "installed"
+LEGACY_MANAGED_SKILLS_FILE = Path.home() / ".ai-rules" / "managed-skills"
+# Backwards-compatible alias used by older callers and checks.
+STATE_FILE = LEGACY_STATE_FILE
+
+MANIFEST_VERSION = 1
+BLOCK_BEGIN = "<!-- BEGIN awesome-ai-prompts (managed) -->"
+BLOCK_END = "<!-- END awesome-ai-prompts -->"
+LEGACY_MARKER_PREFIX = "<!-- awesome-ai-prompts "
 
 HOME = Path.home()
 TARGETS = {
@@ -183,88 +208,410 @@ def command_files(repo: Path) -> list[Path]:
     return sorted(p for p in src.glob("*.md") if p.is_file())
 
 
-def count_files(directory: Path) -> int:
-    return sum(
-        1
-        for p in directory.rglob("*")
-        if p.is_file() and p.name != ".DS_Store"
-    )
+# ---------------------------------------------------------------------------
+# Content hashing and HOME-relative path helpers
+# ---------------------------------------------------------------------------
 
 
-def copy_file(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
-def distribute_rules(repo: Path, sha: str) -> str:
-    docs = doc_files(repo)
+def sha256_file(path: Path) -> str:
+    return sha256_bytes(path.read_bytes())
 
-    parts = [f"<!-- awesome-ai-prompts {sha} -->", ""]
-    for f in docs:
-        parts.append(f.read_text(encoding="utf-8").rstrip() + "\n")
-    combined = "\n".join(parts)
+
+def rel_to_home(path: Path) -> str:
+    return path.relative_to(HOME).as_posix()
+
+
+def abs_from_home(relative: str) -> Path:
+    return HOME / Path(relative)
+
+
+# ---------------------------------------------------------------------------
+# Manifest: the single source of truth for repository-managed paths
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Manifest:
+    """Repository-managed files and rule blocks, keyed by HOME-relative path."""
+
+    repo: str = ""
+    version: int = MANIFEST_VERSION
+    files: dict[str, dict[str, str]] = field(default_factory=dict)
+    blocks: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    def to_json(self) -> str:
+        payload = {
+            "version": self.version,
+            "repo": self.repo,
+            "files": {key: self.files[key] for key in sorted(self.files)},
+            "blocks": {key: self.blocks[key] for key in sorted(self.blocks)},
+        }
+        return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+    @classmethod
+    def from_json(cls, text: str) -> "Manifest":
+        data = json.loads(text)
+        if data.get("version") != MANIFEST_VERSION:
+            raise ValueError(f"unsupported manifest version: {data.get('version')!r}")
+        files = data.get("files", {})
+        blocks = data.get("blocks", {})
+        for key, value in files.items():
+            if not isinstance(key, str) or not isinstance(value, dict):
+                raise ValueError(f"malformed file entry: {key!r}")
+            if not isinstance(value.get("sha256"), str) or not value["sha256"]:
+                raise ValueError(f"file entry has no hash: {key!r}")
+        for key, value in blocks.items():
+            if not isinstance(key, str) or not isinstance(value, dict):
+                raise ValueError(f"malformed block entry: {key!r}")
+        return cls(
+            repo=str(data.get("repo", "")),
+            version=MANIFEST_VERSION,
+            files=dict(files),
+            blocks=dict(blocks),
+        )
+
+
+def read_legacy_managed_skill_names() -> set[str]:
+    if LEGACY_MANAGED_SKILLS_FILE.is_file():
+        return {
+            line.strip()
+            for line in LEGACY_MANAGED_SKILLS_FILE.read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        }
+    return set()
+
+
+def migrate_legacy_manifest(repo: Path, sha: str) -> Manifest:
+    """Adopt the paths an earlier installer version managed.
+
+    The old layout tracked skills in ``managed-skills`` and left rules and
+    commands untracked. There is no historical hash for those paths, so the
+    current on-disk content becomes the baseline: it is treated as clean and is
+    refreshed on this run.
+    """
+    manifest = Manifest(repo=sha)
+    if not (LEGACY_STATE_FILE.is_file() or LEGACY_MANAGED_SKILLS_FILE.is_file()):
+        return manifest
 
     for agent in ALL_AGENTS:
         dest = TARGETS[agent]["rules"]
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(combined, encoding="utf-8")
-        print(f"rules  -> {dest}")
-
-    return combined
-
-
-def read_managed_skill_names(current_names: set[str]) -> set[str]:
-    if MANAGED_SKILLS_FILE.is_file():
-        return {
-            line.strip()
-            for line in MANAGED_SKILLS_FILE.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
-    # Migrate installations made before ownership tracking was introduced.
-    return current_names if STATE_FILE.is_file() else set()
-
-
-def remove_path(path: Path) -> None:
-    if path.is_dir():
-        shutil.rmtree(path)
-    else:
-        path.unlink()
-
-
-def distribute_skills(repo: Path) -> tuple[int, int]:
-    skills = skill_dirs(repo)
-    names = {s.name for s in skills}
-    managed_names = read_managed_skill_names(names)
-    ignore = shutil.ignore_patterns(".DS_Store", "agents")
-    total_files = sum(count_files(s) for s in skills)
+        if dest.is_file():
+            first_line = dest.read_text(encoding="utf-8").splitlines()[:1]
+            if first_line and first_line[0].startswith(LEGACY_MARKER_PREFIX):
+                manifest.blocks[rel_to_home(dest)] = {"sha256": ""}
 
     for dest in SKILL_TARGETS:
-        for skill in skills:
-            target = dest / skill.name
-            if target.exists() and skill.name not in managed_names:
-                sys.exit(
-                    f"refusing to replace unmanaged skill: {target}\n"
-                    "Move or remove it, then run again."
-                )
+        for name in read_legacy_managed_skill_names():
+            directory = dest / name
+            if not directory.is_dir():
+                continue
+            for path in sorted(directory.rglob("*")):
+                if path.is_file():
+                    manifest.files[rel_to_home(path)] = {
+                        "sha256": sha256_file(path),
+                        "kind": "skill",
+                    }
 
-    for dest in SKILL_TARGETS:
-        dest.mkdir(parents=True, exist_ok=True)
-        for name in sorted(managed_names - names):
-            obsolete = dest / name
-            if obsolete.exists():
-                remove_path(obsolete)
-        for skill in skills:
-            target = dest / skill.name
-            if target.exists():
-                remove_path(target)
-            shutil.copytree(skill, target, ignore=ignore)
-        print(f"skills -> {dest} ({len(skills)} skills)")
+    source_commands = {path.name for path in command_files(repo)}
+    for agent in ALL_AGENTS:
+        directory = TARGETS[agent]["commands"]
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.md")):
+            if path.name in source_commands:
+                manifest.files[rel_to_home(path)] = {
+                    "sha256": sha256_file(path),
+                    "kind": "command",
+                }
 
-    MANAGED_SKILLS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MANAGED_SKILLS_FILE.write_text(
-        "".join(f"{name}\n" for name in sorted(names)), encoding="utf-8"
+    print("NOTE: migrated legacy install state into the new manifest.")
+    return manifest
+
+
+def load_manifest(repo: Path, sha: str) -> Manifest:
+    if MANIFEST_FILE.is_file():
+        try:
+            return Manifest.from_json(MANIFEST_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, ValueError) as error:
+            sys.exit(
+                f"cannot read {MANIFEST_FILE}: {error}\nRemove it and run again."
+            )
+    return migrate_legacy_manifest(repo, sha)
+
+
+def save_manifest(manifest: Manifest) -> None:
+    MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MANIFEST_FILE.write_text(manifest.to_json(), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Ownership classification and refusal helpers
+# ---------------------------------------------------------------------------
+
+
+def classify(relative: str, manifest: Manifest) -> str:
+    """Return the ownership state of a HOME-relative path.
+
+    One of ``absent``, ``managed``, ``modified``, ``missing``, or ``unmanaged``.
+    """
+    entry = manifest.files.get(relative)
+    target = abs_from_home(relative)
+    if not target.is_file():
+        return "missing" if entry is not None else "absent"
+    if entry is None:
+        return "unmanaged"
+    return "managed" if sha256_file(target) == entry["sha256"] else "modified"
+
+
+def refuse_unmanaged(path: Path, kind: str) -> None:
+    sys.exit(
+        f"refusing to replace unmanaged {kind}: {path}\n"
+        "It is not recorded as managed by this repository.\n"
+        "Move or remove it, then run again."
     )
+
+
+def refuse_modified(path: Path, kind: str) -> None:
+    sys.exit(
+        f"refusing to replace locally modified {kind}: {path}\n"
+        "Re-run with --force to overwrite your changes."
+    )
+
+
+def preflight_files(
+    desired: dict[str, bytes], manifest: Manifest, kind: str, force: bool
+) -> None:
+    """Refuse the whole run before mutating anything if any target conflicts."""
+    for relative in sorted(desired):
+        target = abs_from_home(relative)
+        state = classify(relative, manifest)
+        if state == "unmanaged":
+            refuse_unmanaged(target, kind)
+        if state == "modified" and not force:
+            refuse_modified(target, kind)
+
+
+# ---------------------------------------------------------------------------
+# Rules: a marked managed block inside each agent's global rules file
+# ---------------------------------------------------------------------------
+
+
+def rules_body(repo: Path) -> str:
+    sections = [
+        path.read_text(encoding="utf-8").rstrip("\n") for path in doc_files(repo)
+    ]
+    return "\n\n".join(sections)
+
+
+def render_block(body: str) -> str:
+    return f"{BLOCK_BEGIN}\n{body}\n{BLOCK_END}\n"
+
+
+def has_block(text: str) -> bool:
+    return text.count(BLOCK_BEGIN) == 1 and text.count(BLOCK_END) == 1
+
+
+def block_body(text: str) -> str:
+    start = text.index(BLOCK_BEGIN) + len(BLOCK_BEGIN)
+    end = text.index(BLOCK_END)
+    return text[start:end].strip("\n")
+
+
+def replace_block(text: str, block: str) -> str:
+    start = text.index(BLOCK_BEGIN)
+    end = text.index(BLOCK_END) + len(BLOCK_END)
+    return text[:start] + block.rstrip("\n") + text[end:]
+
+
+def distribute_rules(repo: Path, manifest: Manifest, force: bool) -> str:
+    body = rules_body(repo)
+    block = render_block(body)
+    body_hash = sha256_bytes(body.encode("utf-8"))
+
+    for agent in ALL_AGENTS:
+        dest = TARGETS[agent]["rules"]
+        key = rel_to_home(dest)
+
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(block, encoding="utf-8")
+            print(f"rules  -> {dest} (created)")
+        else:
+            existing = dest.read_text(encoding="utf-8")
+            if has_block(existing):
+                previous_hash = manifest.blocks.get(key, {}).get("sha256", "")
+                current_hash = sha256_bytes(block_body(existing).encode("utf-8"))
+                if previous_hash and previous_hash != current_hash and not force:
+                    refuse_modified(dest, "rules block")
+                new_text = replace_block(existing, block)
+                print(f"rules  -> {dest} (updated)")
+            elif existing.lstrip().startswith(LEGACY_MARKER_PREFIX):
+                new_text = block
+                print(f"rules  -> {dest} (migrated legacy file)")
+            elif BLOCK_BEGIN in existing or BLOCK_END in existing:
+                sys.exit(
+                    f"malformed managed block in {dest}: expected exactly one "
+                    f"{BLOCK_BEGIN!r} and one {BLOCK_END!r} marker."
+                )
+            elif not existing.strip():
+                new_text = block
+                print(f"rules  -> {dest} (created)")
+            else:
+                new_text = existing.rstrip("\n") + "\n\n" + block
+                print(f"rules  -> {dest} (appended; existing content preserved)")
+            if not new_text.endswith("\n"):
+                new_text += "\n"
+            dest.write_text(new_text, encoding="utf-8")
+
+        manifest.blocks[key] = {"sha256": body_hash}
+
+    return body
+
+
+# ---------------------------------------------------------------------------
+# Skills: per-file, sidecar exclusion limited to <skill-root>/agents/
+# ---------------------------------------------------------------------------
+
+
+def skill_payload(skill: Path) -> dict[str, bytes]:
+    """Return the distributable files of a skill, keyed by relative path.
+
+    Only a top-level ``agents/`` directory and ``.DS_Store`` files are omitted;
+    a nested ``agents/`` directory is legitimate content.
+    """
+    payload: dict[str, bytes] = {}
+    for path in sorted(skill.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(skill)
+        if relative.parts and relative.parts[0] == "agents":
+            continue
+        if path.name == ".DS_Store":
+            continue
+        payload[relative.as_posix()] = path.read_bytes()
+    return payload
+
+
+def prune_empty_skill_dirs(dest: Path) -> None:
+    for child in sorted(dest.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if child.is_dir() and not any(child.iterdir()):
+            child.rmdir()
+            print(f"cleanup -> removed {child}")
+
+
+def distribute_skills(
+    repo: Path, manifest: Manifest, force: bool
+) -> tuple[int, int]:
+    skills = skill_dirs(repo)
+    payloads = {skill.name: skill_payload(skill) for skill in skills}
+    total_files = sum(len(files) for files in payloads.values())
+
+    desired: dict[str, bytes] = {}
+    for dest in SKILL_TARGETS:
+        for skill in skills:
+            for relative, data in payloads[skill.name].items():
+                desired[rel_to_home(dest / skill.name / relative)] = data
+
+    preflight_files(desired, manifest, "skill", force)
+
+    # Prune only files this repository previously wrote and no longer produces.
+    for relative in sorted(manifest.files):
+        entry = manifest.files[relative]
+        if entry.get("kind") != "skill" or relative in desired:
+            continue
+        target = abs_from_home(relative)
+        if not target.is_file():
+            continue
+        if sha256_file(target) == entry["sha256"]:
+            target.unlink()
+            print(f"remove -> {target}")
+        else:
+            print(f"NOTE: keeping locally modified managed skill file: {target}")
+
+    for relative, data in sorted(desired.items()):
+        target = abs_from_home(relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    for dest in SKILL_TARGETS:
+        for skill in skills:
+            (dest / skill.name).mkdir(parents=True, exist_ok=True)
+        prune_empty_skill_dirs(dest)
+
+    manifest.files = {
+        key: value
+        for key, value in manifest.files.items()
+        if value.get("kind") != "skill"
+    }
+    for relative, data in desired.items():
+        manifest.files[relative] = {
+            "sha256": sha256_bytes(data),
+            "kind": "skill",
+        }
+
+    for dest in SKILL_TARGETS:
+        print(f"skills -> {dest} ({len(skills)} skills)")
     return len(skills), total_files
+
+
+# ---------------------------------------------------------------------------
+# Commands: per-file ownership and pruning of obsolete managed commands
+# ---------------------------------------------------------------------------
+
+
+def desired_command_files(repo: Path) -> dict[str, bytes]:
+    desired: dict[str, bytes] = {}
+    sources = command_files(repo)
+    for agent in ALL_AGENTS:
+        directory = TARGETS[agent]["commands"]
+        for source in sources:
+            desired[rel_to_home(directory / source.name)] = source.read_bytes()
+    return desired
+
+
+def distribute_commands(repo: Path, manifest: Manifest, force: bool) -> int:
+    desired = desired_command_files(repo)
+    preflight_files(desired, manifest, "command", force)
+
+    for relative in sorted(manifest.files):
+        entry = manifest.files[relative]
+        if entry.get("kind") != "command" or relative in desired:
+            continue
+        target = abs_from_home(relative)
+        if not target.is_file():
+            continue
+        if sha256_file(target) == entry["sha256"]:
+            target.unlink()
+            print(f"remove -> {target}")
+        else:
+            print(f"NOTE: keeping locally modified managed command: {target}")
+
+    for relative, data in sorted(desired.items()):
+        target = abs_from_home(relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    manifest.files = {
+        key: value
+        for key, value in manifest.files.items()
+        if value.get("kind") != "command"
+    }
+    for relative, data in desired.items():
+        manifest.files[relative] = {
+            "sha256": sha256_bytes(data),
+            "kind": "command",
+        }
+
+    count = len(command_files(repo))
+    for agent in ALL_AGENTS:
+        print(f"cmds   -> {TARGETS[agent]['commands']} ({count} files)")
+    return count
 
 
 def warn_opencode_skill_overrides(repo: Path) -> None:
@@ -284,17 +631,6 @@ def warn_opencode_skill_overrides(repo: Path) -> None:
     )
     for name in overlaps:
         print(f"    {name}")
-
-
-def distribute_commands(repo: Path) -> int:
-    files = command_files(repo)
-    for agent in ALL_AGENTS:
-        dest = TARGETS[agent]["commands"]
-        dest.mkdir(parents=True, exist_ok=True)
-        for f in files:
-            copy_file(f, dest / f.name)
-        print(f"cmds   -> {dest} ({len(files)} files)")
-    return len(files)
 
 
 def remove_managed_docs(directory: Path, managed: set[str]) -> bool:
@@ -353,11 +689,6 @@ def warn_codex_size(combined: str) -> None:
         print(f"    project_doc_max_bytes = {CODEX_RECOMMENDED_MAX_BYTES}")
 
 
-def write_state(repo: Path) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(git_short_sha(repo) + "\n", encoding="utf-8")
-
-
 def plural(count: int, singular: str, plural_form: str | None = None) -> str:
     word = singular if count == 1 else (plural_form or singular + "s")
     return f"{count} {word}"
@@ -391,21 +722,39 @@ def print_summary(
     print(f"  cleanup   {plural(cleanup, 'path')} removed")
 
 
-def do_sync() -> int:
+def do_sync(force: bool) -> int:
     repo = resolve_repo(pull=True)
     sha = git_short_sha(repo)
     print(f"source: {repo} @ {sha}\n")
-    combined = distribute_rules(repo, sha)
-    skills, skill_files = distribute_skills(repo)
-    commands = distribute_commands(repo)
+    manifest = load_manifest(repo, sha)
+    combined = distribute_rules(repo, manifest, force)
+    skills, skill_files = distribute_skills(repo, manifest, force)
+    commands = distribute_commands(repo, manifest, force)
     cleanup = cleanup_obsolete(repo)
     warn_codex_size(combined)
-    write_state(repo)
+    manifest.repo = sha
+    save_manifest(manifest)
+    for legacy in (LEGACY_STATE_FILE, LEGACY_MANAGED_SKILLS_FILE):
+        if legacy.is_file():
+            legacy.unlink()
     print_summary(len(doc_files(repo)), skills, skill_files, commands, cleanup)
     warn_opencode_skill_overrides(repo)
-    print(f"\nrecorded {sha} in {STATE_FILE}")
+    print(f"\nrecorded {sha} in {MANIFEST_FILE}")
     print("done.")
     return 0
+
+
+def read_installed_revision() -> str:
+    if MANIFEST_FILE.is_file():
+        try:
+            return Manifest.from_json(
+                MANIFEST_FILE.read_text(encoding="utf-8")
+            ).repo or "(none)"
+        except (json.JSONDecodeError, ValueError):
+            return "(invalid manifest)"
+    if LEGACY_STATE_FILE.is_file():
+        return LEGACY_STATE_FILE.read_text(encoding="utf-8").strip() or "(none)"
+    return "(none)"
 
 
 def do_check() -> int:
@@ -419,9 +768,7 @@ def do_check() -> int:
         return 0
     upstream_sha = upstream.stdout.strip()
 
-    installed = "(none)"
-    if STATE_FILE.is_file():
-        installed = STATE_FILE.read_text(encoding="utf-8").strip() or "(none)"
+    installed = read_installed_revision()
 
     print(f"installed: {installed}")
     print(f"upstream:  {upstream_sha}")
@@ -441,8 +788,13 @@ def main() -> int:
         action="store_true",
         help="compare the installed revision with the upstream revision",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite locally modified managed files without prompting",
+    )
     args = parser.parse_args()
-    return do_check() if args.check else do_sync()
+    return do_check() if args.check else do_sync(args.force)
 
 
 if __name__ == "__main__":
