@@ -1,0 +1,3 @@
+# The improvement plan is tracked for history but is a temporary working list, so
+# keep it out of release archives while retaining it in the repository.
+todo.md export-ignore
