@@ -170,8 +170,12 @@ implementation, and `react-rules.md` adds only React-specific design rules. Supp
 directives and the `any` policy have one form, defined in `typescript-rules.md` and
 enforced, not redefined, in `lint-rules.md`. Module-file naming and API-documentation
 conventions are also owned by `typescript-rules.md`; `react-rules.md` defers to them
-instead of restating them. Projects may replace a baseline rule only with an explicit
-scoped override and reason.
+instead of restating them. `lint-rules.md` owns the tooling enforcement model: root
+type-aware linting with `tsc --noEmit` as the authoritative gate, per-family rule
+scoping, and the replacement invariant that disables a base rule only where its
+type-aware replacement is enabled in the same scope. Projects may replace a baseline rule
+only with an explicit scoped override and reason, and no override may lower coverage,
+lower a rule's severity, or disable a rule without an enabled replacement in that scope.
 
 The domain-oriented skills intentionally use `CONTEXT.md` and `CONTEXT-MAP.md` for
 glossaries and `docs/adr/` for decisions. This differs from upstream's current
