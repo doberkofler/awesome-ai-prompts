@@ -91,17 +91,32 @@ coercion except explicit boolean coercion with `!!`. Report `prefer-const` as a 
 Do not require template literals, object shorthand, spread syntax, import sorting, or
 bans on increments and numeric literals.
 
-### Suppression Rules
+### Suppressions
 
-- **Never** use `// @ts-ignore` or `// @ts-expect-error` without:
-  1. A comment starting with `NOTE: ` explaining _why_ it is unavoidable
-  2. Explicit permission requested and granted before adding it
-- **Never** relax any lint or TypeScript rule (e.g., disabling eslint rules inline, weakening tsconfig flags, casting to `any`) without:
-  1. Demonstrating it is strictly necessary — not merely convenient
-  2. Asking for explicit permission before proceeding
-  3. Adding a `NOTE: ` comment at the suppression site explaining the justification
+Suppressions hide a real defect from the compiler. Treat every one as temporary debt, and
+use exactly one form in production code:
 
-Treat any suppression as a last resort, not a workaround.
+```typescript
+// @ts-expect-error TS2345 -- NOTE: why it is unavoidable; what removes it.
+```
+
+- **Ban `@ts-ignore`.** It silences every error on the next line, including errors that
+  appear after the original cause is fixed. `typescript/ban-ts-comment` rejects it.
+- **`@ts-expect-error` in type tests is the single exception.** There the annotation is the
+  assertion, so a bare `// @ts-expect-error` needs no description and no approval.
+- **`@ts-expect-error` in production code requires explicit, granted permission** before it
+  is added.
+- The **diagnostic code is documentary, not compiler-enforced.** TypeScript never checks that
+  `TS2345` is the code that would have fired, and the directive silences whatever error does
+  occur. Keep the code accurate by hand and delete the directive as soon as the error is gone.
+- The text after `-- NOTE: ` is **mandatory** and must state why the suppression is
+  unavoidable and, when temporary, the condition that removes it.
+
+Never relax any other lint or TypeScript rule (disabling a rule inline, weakening a `tsconfig`
+flag, casting to `any`) without:
+1. Demonstrating it is strictly necessary — not merely convenient.
+2. Explicit permission requested and granted before proceeding.
+3. A `NOTE: ` comment at the site stating the justification and what removes it.
 
 ## Documentation
 - Use JSDoc (`/** ... */`) for all exported functions and types
@@ -112,6 +127,15 @@ Treat any suppression as a last resort, not a workaround.
 > Code quality and type safety are the top priorities. Every type hole is a potential runtime crash.
 
 - **Never** use `any`. If tempted, use `unknown` and narrow explicitly.
+- Enforce this with `typescript/no-explicit-any` for authored code, with no rest-argument
+  exemption. Prefer concrete tuples, constrained generics, or `unknown[]` over `any[]` in
+  rest and callback signatures; an unavoidable interoperability case is a localized,
+  justified suppression, never a blanket rule exemption.
+- Exclude generated declaration files from linting instead of weakening the `any` policy for
+  the whole project.
+- Retain the type-aware `typescript/no-unsafe-*` rules (assignment, call, member access,
+  argument, return) so inferred and dependency-sourced `any` values are caught even where no
+  explicit `any` appears.
 - **Never** use type assertions (`as`) on external data — use Zod (see below).
 - Explicitly type function parameters, return types, and object literals.
 - No enums. Use union types.

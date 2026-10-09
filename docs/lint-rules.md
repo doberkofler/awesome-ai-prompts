@@ -26,6 +26,21 @@ Oxlint as a replacement for the TypeScript compiler's type and module checks.
 The canonical suppression and runtime-boundary requirements remain in **TypeScript Best
 Practices**. React-specific behavior remains in **React Component Rules**.
 
+### Required rule configuration
+
+Keep these policies in Oxlint configuration rather than restating them here:
+
+- `typescript/ban-ts-comment`: reject `@ts-ignore`, and require a description on
+  `@ts-expect-error` (`allow-with-description`, with `minimumDescriptionLength` and an
+  optional `descriptionFormat`). Relax the description requirement for type-test files with
+  an `overrides` entry.
+- `typescript/no-explicit-any`: leave `ignoreRestArgs` disabled so rest and callback
+  signatures are checked like any other type, and exclude generated declaration files
+  (`ignorePatterns` or `overrides`) instead of disabling the rule.
+- `typescript/no-unsafe-assignment`, `no-unsafe-call`, `no-unsafe-member-access`,
+  `no-unsafe-argument`, and `no-unsafe-return`: enable them with type-aware linting
+  (`options.typeAware`).
+
 ## Oxfmt
 
 - Configure Oxfmt as the sole formatting owner for supported authored files.
