@@ -40,6 +40,11 @@ Keep these policies in Oxlint configuration rather than restating them here:
 - `typescript/no-unsafe-assignment`, `no-unsafe-call`, `no-unsafe-member-access`,
   `no-unsafe-argument`, and `no-unsafe-return`: enable them with type-aware linting
   (`options.typeAware`).
+- `typescript/return-await`: set to `error-handling-correctness-only`, so `await` is required
+  where omitting it would change `try`/`catch`/`finally` behavior while direct Promise
+  returns stay permitted. Requires type-aware linting (`options.typeAware`).
+- `typescript/require-await`: use the TypeScript-aware rule instead of also enabling the base
+  `require-await`, which would duplicate or contradict its diagnostics.
 
 ## Oxfmt
 

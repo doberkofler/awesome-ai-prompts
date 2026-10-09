@@ -165,7 +165,7 @@ flag, casting to `any`) without:
 - Use `??` and `?.` where appropriate — never use `||` as a null-coalescing substitute (it conflates `null`/`undefined` with falsy).
 - Prefix unused variables with `_` (e.g., `_unusedParam`).
 - `const` for everything that isn't reassigned, `let` otherwise. Never `var`.
-- Don't `await` in return statements — return the Promise directly.
+- Return the Promise directly. Use `return await` only when it changes `try`/`catch`/`finally` behavior.
 - Always use curly braces for control flow, even single-line.
 - Prefer object spread (`{...args}`) over `Object.assign`.
 - Use rest parameters instead of `arguments`.
