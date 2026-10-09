@@ -560,6 +560,7 @@ class CheckTests(InstallerTestCase):
     def test_clean_install_reports_ok_integrity(self) -> None:
         self.assertEqual(0, self.fx.run().returncode)
         result = self.fx.run("--check")
+        self.assertEqual(0, result.returncode, result.stdout)
         self.assertIn("repository", result.stdout)
         self.assertIn("integrity", result.stdout)
         self.assertIn("status     ok", result.stdout)
@@ -567,6 +568,11 @@ class CheckTests(InstallerTestCase):
         self.assertEqual([], self._entries(result.stdout, "missing"))
         self.assertEqual([], self._entries(result.stdout, "unexpected"))
         self.assertEqual([], self._entries(result.stdout, "obsolete"))
+
+    def test_check_before_install_is_not_ok(self) -> None:
+        result = self.fx.run("--check")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("not installed", result.stdout)
 
     def test_check_identifies_exact_modified_file(self) -> None:
         self.assertEqual(0, self.fx.run().returncode)

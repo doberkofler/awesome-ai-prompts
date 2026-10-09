@@ -62,8 +62,9 @@ Usage:
 ``--check`` reports the repository-update status (installed revision vs fetched
 upstream) and the installation-integrity status separately. Integrity compares
 every managed path against its recorded SHA-256 and lists modified, missing,
-unexpected, and obsolete artifacts. It exits nonzero for content drift or when a
-required check (manifest or upstream revision) cannot be evaluated.
+unexpected, and obsolete artifacts. It exits nonzero for content drift or when the
+required integrity check (the manifest) cannot be evaluated; repository currency
+is informational.
 
 Network access is required to clone/pull. Offline runs reuse the local copy.
 """
@@ -171,6 +172,10 @@ def git_short_sha(repo: Path) -> str:
 
 def pull_repo(repo: Path) -> None:
     if not (repo / ".git").is_dir():
+        return
+    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
+    if not branch or branch == "HEAD":
+        print(f"NOTE: {repo} is checked out at a fixed revision; skipping git pull.")
         return
     status = run_git(["status", "--porcelain"], repo)
     if status.returncode != 0 or status.stdout.strip():
@@ -1441,8 +1446,9 @@ def do_check() -> int:
     print()
     print_inventory(repo)
 
-    repository_problem = upstream_sha is None or installed != upstream_sha
-    return 1 if (repository_problem or integrity_problem) else 0
+    # Only installation integrity is a required check. Repository currency is
+    # informational: a verified release archive has no git metadata to compare.
+    return 1 if integrity_problem else 0
 
 
 # ---------------------------------------------------------------------------

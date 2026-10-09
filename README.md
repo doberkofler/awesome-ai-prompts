@@ -26,40 +26,100 @@ compatibility source; using it avoids a second copy in its native skills directo
 
 Requires `git` and Python 3.
 
-### One-liner (recommended)
+### Release install (recommended)
+
+Every release publishes a source archive and its SHA-256 checksum under
+[Releases](https://github.com/doberkofler/awesome-ai-prompts/releases). Set
+`VERSION` to the release tag you want (for example `v1.0.0`), then download,
+verify the checksum, and extract.
 
 macOS / Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doberkofler/awesome-ai-prompts/main/sync_ai_rules.py | python3 -
+VERSION=v1.0.0
+BASE="https://github.com/doberkofler/awesome-ai-prompts/releases/download/${VERSION}"
+TMP="$(mktemp -d)"
+curl -fsSL -o "$TMP/awesome-ai-prompts-${VERSION}.tar.gz" "$BASE/awesome-ai-prompts-${VERSION}.tar.gz"
+curl -fsSL -o "$TMP/SHA256SUMS" "$BASE/SHA256SUMS"
+( cd "$TMP" && sha256sum -c SHA256SUMS )      # macOS: shasum -a 256 -c SHA256SUMS
+mkdir -p ~/.ai-rules/src
+tar -xzf "$TMP/awesome-ai-prompts-${VERSION}.tar.gz" -C ~/.ai-rules/src --strip-components=1
+python3 ~/.ai-rules/src/sync_ai_rules.py
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://raw.githubusercontent.com/doberkofler/awesome-ai-prompts/main/sync_ai_rules.py | python -
+$Version = "v1.0.0"
+$Base = "https://github.com/doberkofler/awesome-ai-prompts/releases/download/$Version"
+$Tmp = Join-Path $env:TEMP "ai-rules-$Version"
+New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
+Invoke-WebRequest "$Base/awesome-ai-prompts-$Version.tar.gz" -OutFile "$Tmp/awesome-ai-prompts-$Version.tar.gz"
+Invoke-WebRequest "$Base/SHA256SUMS" -OutFile "$Tmp/SHA256SUMS"
+Get-Content "$Tmp/SHA256SUMS"   # confirm it matches Get-FileHash -Algorithm SHA256
+New-Item -ItemType Directory -Force -Path "$HOME/.ai-rules/src" | Out-Null
+tar -xzf "$Tmp/awesome-ai-prompts-$Version.tar.gz" -C "$HOME/.ai-rules/src" --strip-components=1
+python "$HOME/.ai-rules/src/sync_ai_rules.py"
 ```
 
-### Or clone
+### Or clone at a pinned tag
 
 ```bash
-git clone https://github.com/doberkofler/awesome-ai-prompts.git ~/.ai-rules/src
+VERSION=v1.0.0
+git clone --branch "$VERSION" --depth 1 https://github.com/doberkofler/awesome-ai-prompts.git ~/.ai-rules/src
 python3 ~/.ai-rules/src/sync_ai_rules.py
 ```
+
+### Local development
+
+If you are developing the rules rather than consuming them, work in a `main`
+checkout and run the installer directly against your working tree:
+
+```bash
+git clone https://github.com/doberkofler/awesome-ai-prompts.git
+cd awesome-ai-prompts
+python3 sync_ai_rules.py --dry-run   # preview the plan
+python3 sync_ai_rules.py             # install the working-tree content
+```
+
+When the script runs from a checkout it uses that directory as its source. It
+skips `git pull` when the checkout has local changes (and when it is checked out
+at a fixed revision), so you can edit `docs/`, `commands/`, and `skills/` and
+re-run to install your edits.
 
 ### Update and verify
 
 ```bash
-python3 ~/.ai-rules/src/sync_ai_rules.py            # pull latest and distribute
-python3 ~/.ai-rules/src/sync_ai_rules.py --check    # is the install current?
+python3 ~/.ai-rules/src/sync_ai_rules.py            # install the checked-out content
+python3 ~/.ai-rules/src/sync_ai_rules.py --check    # revision status and content integrity
 ```
+
+`--check` reports two independent statuses: the installed revision against
+upstream, and every installed file against its recorded SHA-256 (`modified`,
+`missing`, `unexpected`, `obsolete`). It exits nonzero on content drift or when
+the manifest cannot be read; the repository status is informational, since a
+release archive has no git metadata. To update, install a newer release tag, or
+`git -C ~/.ai-rules/src fetch --tags && git -C ~/.ai-rules/src checkout "$VERSION"`.
 
 Optional alias: `alias ai-rules='python3 ~/.ai-rules/src/sync_ai_rules.py'`.
 
+### Trust and update model
+
+Installing runs code from this repository. Releases are built by CI from an
+annotated `v*` tag and published with a SHA-256 checksum. Verifying the checksum
+confirms the downloaded archive matches the published artifact; it does **not**
+protect against a compromised GitHub account, a malicious maintainer, or a
+tampered release. Pin an explicit `VERSION`, download only over HTTPS from this
+repository, and review the script before running it.
+
 ### Notes
 
+Maintainers cut a release by pushing a `v*` tag; CI runs `release.py`, which
+builds `dist/awesome-ai-prompts-<tag>.tar.gz` and `dist/SHA256SUMS` and attaches
+both to the GitHub release.
+
 See [`PROVENANCE.md`](PROVENANCE.md) for content origins, intentional adaptations,
-upstream maintenance, and distribution behavior.
+upstream maintenance, distribution behavior, and the release process.
 
 ## General Meta-Prompts
 

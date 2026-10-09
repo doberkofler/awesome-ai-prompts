@@ -214,23 +214,45 @@ Every run is planned before it mutates anything:
   is given;
 - `--restore [BACKUP]` restores an installer-created backup (default: latest).
 
-`--check` reports two independent statuses and exits nonzero when either is unhappy:
+`--check` reports two independent statuses:
 
 - **repository** compares the revision recorded in the manifest with the fetched
-  upstream revision (`up to date`, `update available`, or `unknown`);
+  upstream revision (`up to date`, `update available`, or `unknown`). This status is
+  informational and does not affect the exit code, because a verified release archive
+  has no git metadata to compare;
 - **integrity** compares every managed path against its recorded SHA-256 and the
   current source, and lists, separately, `modified` (content changed), `missing`
   (deleted, or rules block markers gone), `unexpected` (an unmanaged file where the
   source wants one), and `obsolete` (managed paths the source no longer distributes)
-  artifacts. An unreadable or absent manifest, a legacy-only install, or an
-  unresolvable upstream revision is an unavailable required check and also exits
-  nonzero.
+  artifacts.
+
+The exit code is nonzero for integrity drift or when the required integrity check is
+unavailable: an unreadable or absent manifest or a legacy-only install.
 
 The check never mutates installed content.
 
 The script uses user-level directories, symlinks no content, and requires no
 administrator rights. It also removes only legacy paths that earlier versions of this
 repository managed.
+
+### Release artifacts and trust model
+
+The recommended installation no longer executes from mutable `main`. Pushing an
+annotated `v*` tag triggers `.github/workflows/release.yml`, which runs the test suite,
+then `release.py` builds `dist/awesome-ai-prompts-<tag>.tar.gz` (via `git archive` at
+the tagged commit) and `dist/SHA256SUMS`, and `gh release create` attaches both to the
+GitHub release. A checked-out tag is immutable; the installer detects a fixed checkout
+and skips `git pull`.
+
+The checksum confirms that the downloaded archive matches the published artifact. It
+does **not** protect against a compromised GitHub account, a malicious maintainer, or a
+tampered release. Installations should pin an explicit tag, download only over HTTPS
+from this repository, and review the script before running it.
+
+Local development runs directly from a working `main` checkout: `python3
+sync_ai_rules.py` uses that tree as its source and skips `git pull` when the tree has
+local changes (or is checked out at a fixed revision), so rule edits can be installed
+and verified before a tag is cut.
 
 OpenCode V2 reads global rules from `~/.config/opencode/AGENTS.md`; its accepted but
 inactive `instructions` setting is not a second rule source. Codex reads one
