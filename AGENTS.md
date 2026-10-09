@@ -4,7 +4,7 @@ This document provides instructions for agentic coding assistants operating in t
 
 ## 1. Build, Lint, and Test Commands
 
-Currently, this repository consists of Markdown documentation and prompt protocols. It does not use automated build or test pipelines. All "validation" is performed manually or through agent inspection.
+The repository distributes Markdown rules, commands, and skills, and it ships executable Python: `sync_ai_rules.py` (local distribution), `release.py` (release artifacts), and the suite in `tests/`. Validation is automated — CI runs `python3 -m unittest discover -s tests -t .`, which enforces Markdown structure, frontmatter, internal links, README index coverage, and provenance coverage.
 
 ### Quality Assurance Protocol
 - **Markdown Linting:** 
@@ -16,7 +16,7 @@ Currently, this repository consists of Markdown documentation and prompt protoco
 - **YAML Validation:** 
   - Files in the `commands/` directory MUST have valid YAML frontmatter.
   - The `description` field should be a single, high-impact sentence.
-  - The `agent` field must be one of the specified sub-agent types.
+  - The `agent` field must be a valid OpenCode V2 agent ID (see the schema below).
   - Every `skills/<name>/SKILL.md` must have frontmatter whose `name` equals its directory name, and a `description` no longer than 1024 characters.
 - **Link Checking:** 
   - Ensure all internal links in `README.md` and `commands/` are functional.
@@ -26,9 +26,9 @@ Currently, this repository consists of Markdown documentation and prompt protoco
   - Check that new prompts do not duplicate functionality of existing prompts.
   - Ensure that if a prompt is referenced by a command, that command exists and is documented.
   - Ensure every skill referenced by another skill (e.g. `grill-me` → `grilling`) exists in `skills/`.
-  - Read and update [`PROVENANCE.md`](PROVENANCE.md) when changing `docs/`, adopting or updating a skill, or changing distribution behavior.
+  - Read and update [`PROVENANCE.md`](PROVENANCE.md) when changing `docs/`, `commands/`, adopting or updating a skill, or changing distribution behavior.
 - **Distribution:**
-  - After changing `docs/`, `commands/`, or `skills/`, run `python3 sync_ai_rules.py --check` and require `status: up to date` before finishing.
+  - After changing `docs/`, `commands/`, or `skills/`, run `python3 sync_ai_rules.py --check` and require `integrity` status `ok` before finishing; the `repository` status is informational.
 - **Single File "Test":** 
   - To "test" a new prompt, perform a dry run of its instructions. 
   - Verify that constraints are mutually exclusive and collectively exhaustive (MECE).

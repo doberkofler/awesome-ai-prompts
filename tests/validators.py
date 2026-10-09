@@ -214,6 +214,53 @@ def provenance_errors(root: Path = REPO_ROOT) -> list[str]:
         for doc in sorted(docs.glob("*.md")):
             if not _mentions(text, doc.name):
                 errors.append(f"PROVENANCE.md does not cover document: {doc.name}")
+
+    commands = root / "commands"
+    if commands.is_dir():
+        for command in sorted(commands.glob("*.md")):
+            if not _mentions(text, command.name):
+                errors.append(f"PROVENANCE.md does not cover command: {command.name}")
+    return errors
+
+
+def distributed_files(root: Path = REPO_ROOT) -> list[Path]:
+    """Return every distributed entry point: rule, command, and skill."""
+    files: list[Path] = []
+    for pattern in ("docs/*.md", "commands/*.md"):
+        files.extend(sorted(root.glob(pattern)))
+    skills = root / "skills"
+    if skills.is_dir():
+        files.extend(
+            skill / "SKILL.md"
+            for skill in sorted(skills.iterdir())
+            if (skill / "SKILL.md").is_file()
+        )
+    return files
+
+
+def readme_index_errors(root: Path = REPO_ROOT) -> list[str]:
+    """Validate that every distributed file is linked from the README index."""
+    errors: list[str] = []
+    readme = root / "README.md"
+    if not readme.is_file():
+        return ["README.md is missing"]
+    text = strip_fenced_code(readme.read_text(encoding="utf-8"))
+    targets: set[Path] = set()
+    for raw_target in _LINK.findall(text):
+        target = raw_target.strip()
+        if not target:
+            continue
+        target = target.split()[0].strip("<>")
+        if target.startswith(("http://", "https://", "mailto:", "#", "tel:", "data:")):
+            continue
+        relative = target.split("#", 1)[0]
+        if relative:
+            targets.add((readme.parent / relative).resolve())
+    for path in distributed_files(root):
+        if path.resolve() not in targets:
+            errors.append(
+                f"README.md does not link distributed file: {path.relative_to(root)}"
+            )
     return errors
 
 
@@ -224,4 +271,5 @@ def all_errors(root: Path = REPO_ROOT) -> dict[str, list[str]]:
         "markdown structure": markdown_structure_errors(root),
         "internal links": internal_link_errors(root),
         "provenance coverage": provenance_errors(root),
+        "readme index": readme_index_errors(root),
     }

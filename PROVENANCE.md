@@ -1,11 +1,11 @@
 # Provenance and maintenance
 
-This document is the source of truth for where `skills/` and `docs/` content
-originates, how external material is adapted, and how canonical content is
-distributed to supported agents.
+This document is the source of truth for where `skills/`, `docs/`, and
+`commands/` content originates, how external material is adapted, and how
+canonical content is distributed to supported agents.
 
-`commands/` is outside this document's scope. `PROVENANCE.md` itself is not
-distributed, so these maintenance details add no runtime context.
+`PROVENANCE.md` itself is not distributed, so these maintenance details add no
+runtime context.
 
 ## Skills
 
@@ -19,7 +19,10 @@ distributed, so these maintenance details add no runtime context.
 - Sidecars: upstream `agents/` directories are intentionally omitted.
 
 `Verbatim` below means every retained payload file matched the audited snapshot.
-It does not include the intentionally omitted `agents/` sidecars.
+It does not include the intentionally omitted `agents/` sidecars. Each listed
+skill is checked against that snapshot by
+[`tests/test_provenance_verbatim.py`](tests/test_provenance_verbatim.py) when
+network access is available; the test is skipped offline.
 
 All files in the verbatim and adapted skill directories listed below are covered
 by the upstream MIT license reproduced in
@@ -141,6 +144,19 @@ glossaries and `docs/adr/` for decisions. This differs from upstream's current
 `GLOSSARY` naming and must remain consistent across `domain-modeling`,
 `grill-with-docs`, `wait-what`, `tdd`, and `diagnosing-bugs`.
 
+## Commands
+
+The files under `commands/` are locally authored and have no external upstream.
+They are OpenCode-style command protocols that the installer distributes to every
+supported agent's command directory.
+
+- `dev-reset.md` and `dev-verimode.md` first appear in repository commit
+  [`3e56d9d`](https://github.com/doberkofler/awesome-ai-prompts/commit/3e56d9d56acddcb7cbcf305986d3691b44f98a16).
+- `dev-decompose.md` first appears in repository commit
+  [`a51dc4f`](https://github.com/doberkofler/awesome-ai-prompts/commit/a51dc4f3117d7118cce18bf06d653411c4e0ad9d).
+- `dev-find-reinventions.md` first appears in repository commit
+  [`a650280`](https://github.com/doberkofler/awesome-ai-prompts/commit/a6502800aaca063f3e2cc8f97df206d0ead35aab).
+
 ## Synchronization and adaptation
 
 There are two distinct operations:
@@ -260,9 +276,9 @@ concatenated `~/.codex/AGENTS.md`; increase `project_doc_max_bytes` when the ins
 reports truncation. Codex custom prompts are deprecated, but remain a compatibility
 distribution target.
 
-After changing `docs/`, `skills/`, or distribution behavior:
+After changing `docs/`, `commands/`, `skills/`, or distribution behavior:
 
 1. Run `python3 sync_ai_rules.py`.
-2. Run `python3 sync_ai_rules.py --check` and require `repository` status `up to date`
-   and `integrity` status `ok`.
+2. Run `python3 sync_ai_rules.py --check` and require `integrity` status `ok`; the
+   `repository` status is informational.
 3. Resolve every validation or size warning, or report the unresolved blocker.

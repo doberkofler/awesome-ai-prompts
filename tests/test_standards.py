@@ -1,7 +1,9 @@
 """Static repository standards: Markdown, frontmatter, links, provenance."""
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from tests import validators
 
@@ -24,6 +26,28 @@ class InternalLinkTests(unittest.TestCase):
 class ProvenanceTests(unittest.TestCase):
     def test_every_skill_and_document_is_covered(self) -> None:
         self.assertEqual([], validators.provenance_errors())
+
+
+class ReadmeIndexTests(unittest.TestCase):
+    def test_every_distributed_file_is_indexed(self) -> None:
+        self.assertEqual([], validators.readme_index_errors())
+
+    def test_index_validator_flags_unlisted_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "docs").mkdir()
+            (root / "docs" / "a.md").write_text("x\n", encoding="utf-8")
+            (root / "README.md").write_text("# title\n", encoding="utf-8")
+            errors = validators.readme_index_errors(root)
+            self.assertTrue(any("docs/a.md" in error for error in errors), errors)
+
+    def test_index_validator_accepts_linked_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "docs").mkdir()
+            (root / "docs" / "a.md").write_text("x\n", encoding="utf-8")
+            (root / "README.md").write_text("[a](docs/a.md)\n", encoding="utf-8")
+            self.assertEqual([], validators.readme_index_errors(root))
 
 
 class SelfCheckTests(unittest.TestCase):
