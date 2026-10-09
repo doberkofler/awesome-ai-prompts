@@ -397,61 +397,183 @@ import {helper} from '@application/helper';
 
 # Runtime Validation with Zod
 
-> **Rule**: `JSON.parse` is banned without Zod. Type assertions (`as`) on external data are banned. No exceptions without explicit permission.
+> **Rule**: External data must be validated by a runtime schema before domain use. Type
+> assertions (`as`) on external data are banned.
 
-Type assertions only provide compile-time safety. They are lies to the compiler at runtime. All external data — API responses, `JSON.parse` output, environment variables, message queue payloads, localStorage — must go through Zod.
+Type assertions only provide compile-time safety. They are lies to the compiler at
+runtime. All external data — API responses, `JSON.parse` output, environment variables,
+message queue payloads, storage — must pass through a runtime schema.
 
 ## Rules
 
-- **Never** use `as` for external/runtime data sources.
-- **Never** call `JSON.parse(...)` and use the result without immediately passing it to a Zod schema.
+- **Never** use `as` for external or runtime data sources.
+- Validate before domain use. The schema call need not be syntactically nested with the
+  parse call; it must merely precede any use of the value as domain data.
+- Prefer passing `JSON.parse()` directly into a schema so no unvalidated intermediate
+  value exists. Stage the parse only when separate syntax-error handling or reuse
+  requires it, and type that value as `unknown`.
+- **Never** leave a parsed value inferred as `any`. `JSON.parse()` returns `any`, so a
+  bare `const parsed = JSON.parse(raw)` is a type hole even when a later statement
+  validates it.
+- Do not enforce this with a syntax selector that bans `JSON.parse()`. A syntax check
+  cannot prove that the value was validated before use.
 - Use `schema.parse()` when a validation failure should throw.
-- Use `schema.safeParse()` when you want to handle the error branch explicitly.
-- Add `.refine()` / `.superRefine()` for domain-level constraints (not just shape).
+- Use `schema.safeParse()` when the error branch must be handled explicitly.
+- Add `.refine()` / `.superRefine()` for domain-level constraints, not just shape.
 - Use `.default()` for optional fields with known fallbacks.
 - Use `.transform()` for data normalization at the boundary.
+- Keep malformed input and well-formed-but-invalid shape technically distinct when
+  diagnostics or behavior depend on the difference.
+- Preserve maximum diagnostics: carry formatted schema output in the message and retain
+  the original validation error as `Error.cause`.
 
-## Patterns
+## JSON parsing
+
+Pass `JSON.parse()` directly into the schema by default:
 
 ```typescript
-// ❌ WRONG: type assertion — no runtime safety
-const data = JSON.parse(raw) as User;
-
-// ❌ WRONG: JSON.parse without immediate Zod validation
-const parsed = JSON.parse(raw);
-const user = UserSchema.parse(parsed); // still wrong — the parse is unguarded
-
-// ✅ RIGHT: immediate Zod parse on JSON.parse output
+// ✅ Preferred: no unvalidated intermediate value
 const user = UserSchema.parse(JSON.parse(raw));
 
-// ✅ RIGHT: safeParse for non-throwing path
+// ✅ Preferred: explicit error branch
 const result = UserSchema.safeParse(JSON.parse(raw));
 if (!result.success) {
-	throw new Error(`Invalid shape: ${result.error.format()}`);
+	throw new Error(`Invalid shape:\n${z.prettifyError(result.error)}`, {
+		cause: result.error,
+	});
 }
 const user = result.data;
 ```
 
+Stage the parse only when syntax errors and shape errors need different handling, and
+type the staged value as `unknown`:
+
+```typescript
+// ✅ Acceptable: staged and explicitly typed
+let parsed: unknown;
+try {
+	parsed = JSON.parse(raw);
+} catch (cause: unknown) {
+	throw new Error('Malformed JSON', {cause});
+}
+const user = UserSchema.parse(parsed);
+```
+
+```typescript
+// ❌ WRONG: no runtime validation
+const data = JSON.parse(raw) as User;
+
+// ❌ WRONG: the parsed value is `any`, so the later check is only partial protection
+const parsed = JSON.parse(raw);
+const user = UserSchema.parse(parsed);
+```
+
+A generic JSON or storage helper must not return a caller-chosen type. Return `unknown`
+and let the caller validate, or accept a schema and return the schema's validated output:
+
+```typescript
+const readStoredValue = <S extends z.ZodType>(
+	key: string,
+	schema: S,
+): z.output<S> | null => {
+	const raw = storage.getItem(key);
+	if (raw === null) {
+		return null;
+	}
+	return schema.parse(JSON.parse(raw));
+};
+
+// Arbitrary JSON rather than a domain shape
+const value = z.json().parse(JSON.parse(raw));
+```
+
+## Schema definition
+
+Derive types from schemas, never the reverse.
+
 ```typescript
 import {z} from 'zod';
 
-// Define schema — derive type from it, never the reverse
 const UserSchema = z.object({
-	id: z.string().uuid(),
+	id: z.uuid(),
 	name: z.string().min(1),
-	email: z.string().email(),
-	age: z.number().int().positive().min(13),
+	email: z.email(),
+	age: z.number().int().min(13),
 });
 
 type User = z.infer<typeof UserSchema>;
-
-/** Fetches and validates a user by ID. Throws on invalid shape or network error. */
-export const fetchUser = async (id: string): Promise<User> => {
-	const response = await fetch(`/api/users/${id}`);
-	const raw: unknown = await response.json();
-	return UserSchema.parse(raw);
-};
 ```
+
+- Use top-level formats such as `z.uuid()`, `z.email()`, and `z.url()`. The chained
+  `z.string().uuid()` forms are deprecated.
+- Do not stack redundant constraints. `z.number().int().min(13)` already excludes zero
+  and negatives, so an additional `.positive()` adds nothing.
+- Replace the deprecated `error.format()` with `z.prettifyError()` for text output or
+  `z.treeifyError()` for structured, path-based output.
+
+## Fetch and transport boundaries
+
+Use the established transport abstraction when one exists. Do not call `fetch` directly
+from application or domain code to duplicate behavior the abstraction already owns.
+
+The lowest-level transport boundary owns and distinguishes these failure classes:
+
+1. Network or transport failure.
+2. Non-successful HTTP status.
+3. Response-body read failure.
+4. Malformed JSON.
+5. Well-formed JSON whose shape is invalid.
+
+Endpoint boundaries own the endpoint-specific schema. Application code owns business
+behavior and user-facing fallbacks. A user-facing fallback may be identical for several
+internal failures, but the internal classification must stay distinct.
+
+Interpret status before treating a body as a successful payload. Use `response.ok` by
+default and document intentional status-specific semantics, such as a no-content
+success, a protocol-signalling error status, or a health probe that reports availability
+through the status code.
+
+The pattern below is for **transport-adapter implementations**, not ordinary call sites:
+
+```typescript
+let response: Response;
+try {
+	response = await fetch(url);
+} catch (cause: unknown) {
+	throw new Error('Network request failed', {cause});
+}
+
+if (!response.ok) {
+	throw new Error(`HTTP request failed: ${response.status}`);
+}
+
+let text: string;
+try {
+	text = await response.text();
+} catch (cause: unknown) {
+	throw new Error('Response body could not be read', {cause});
+}
+
+let parsed: unknown;
+try {
+	parsed = JSON.parse(text);
+} catch (cause: unknown) {
+	throw new Error('Response contains malformed JSON', {cause});
+}
+
+const result = UserSchema.safeParse(parsed);
+if (!result.success) {
+	throw new Error(`Invalid response shape:\n${z.prettifyError(result.error)}`, {
+		cause: result.error,
+	});
+}
+return result.data;
+```
+
+- Read the body as text before parsing when body-read failure and JSON-syntax failure
+  must be distinguished; `response.json()` merges the two.
+- A helper that wraps transport must not return a caller-selected generic type. It must
+  return `unknown`, or accept a schema and return the schema's validated output.
 
 ## Environment Boundary
 

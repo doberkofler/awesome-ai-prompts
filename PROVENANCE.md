@@ -193,6 +193,13 @@ TypeScript module guidance and the Node.js TypeScript documentation. No profile 
 represented as universally applicable, and no example is claimed to be locally
 compiler-tested.
 
+The runtime-validation guidance requires schema validation before domain use, prefers
+inline `JSON.parse()` validation to avoid an unvalidated intermediate value, permits an
+explicitly typed staged parse when syntax and shape failures must be distinguished, and
+places network, HTTP, body-read, JSON-syntax, and shape failures at the lowest transport
+boundary. It names no specific product, module, or function and does not require any
+concrete project. It was checked against the Zod documentation.
+
 The domain-oriented skills intentionally use `CONTEXT.md` and `CONTEXT-MAP.md` for
 glossaries and `docs/adr/` for decisions. This differs from upstream's current
 `GLOSSARY` naming and must remain consistent across `domain-modeling`,
