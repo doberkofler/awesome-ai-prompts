@@ -244,19 +244,43 @@ export const fetchUser = async (id: string): Promise<User> => {
 };
 ```
 
-## Environment Variables
+## Environment Boundary
 
-Environment variables are strings from an untrusted source. Validate them at startup:
+Environment variables are strings from an untrusted source. Direct access is
+confined to one configuration adapter per runtime or executable, which validates
+the environment with Zod once at startup and exports the parsed result.
 
 ```typescript
 import {z} from 'zod';
 
-const EnvSchema = z.object({
-	DATABASE_URL: z.string().url(),
+const EnvironmentSchema = z.object({
+	DATABASE_URL: z.url(),
 	PORT: z.coerce.number().int().positive().default(3000),
-	NODE_ENV: z.union([z.literal('development'), z.literal('production'), z.literal('test')]),
+	NODE_ENV: z.enum(['development', 'production', 'test']),
 });
 
-/** Parsed and validated environment. Throws at startup if env is malformed. */
-export const env = EnvSchema.parse(process.env);
+type Environment = z.infer<typeof EnvironmentSchema>;
+
+const parseEnvironment = (source: unknown): Environment => {
+	const result = EnvironmentSchema.safeParse(source);
+
+	if (!result.success) {
+		throw new Error(`Invalid environment:\n${z.prettifyError(result.error)}`, {
+			cause: result.error,
+		});
+	}
+
+	return result.data;
+};
+
+/** Validated environment for this executable; the only reader of the environment source. */
+export const environment = parseEnvironment(process.env);
 ```
+
+- Read `process.env` — or the runtime's equivalent environment source — only in that
+  adapter. Application code imports the validated config and never reads the
+  environment source directly.
+- Give each runtime or executable its own adapter: Node reads `process.env`, browser
+  bundles read `import.meta.env`, and other runtimes use their own source.
+- Preserve diagnostics: put the formatted Zod output in the thrown message and retain
+  the original error as `cause`.

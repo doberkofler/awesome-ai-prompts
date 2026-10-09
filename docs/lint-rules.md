@@ -45,6 +45,11 @@ Keep these policies in Oxlint configuration rather than restating them here:
   returns stay permitted. Requires type-aware linting (`options.typeAware`).
 - `typescript/require-await`: use the TypeScript-aware rule instead of also enabling the base
   `require-await`, which would duplicate or contradict its diagnostics.
+- `node/no-process-env`: enable it for application code, and disable it only through a
+  scoped `overrides` entry for the designated environment adapters, build scripts, and
+  test harnesses that require direct access. Application code imports validated config
+  instead of reading the environment source. The adapter and its validation are defined
+  in the **TypeScript Best Practices** environment boundary.
 
 ## Oxfmt
 
