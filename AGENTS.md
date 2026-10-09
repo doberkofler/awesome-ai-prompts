@@ -52,11 +52,12 @@ Every file in `commands/` MUST start with the following block:
 ```yaml
 ---
 description: A formalized protocol for [specific task].
-agent: [plan | execute | all]
+agent: plan
 ---
 ```
 - **description:** Explain the "why" and "what" of the protocol. It should be written in the third person.
-- **agent:** Specify which sub-agent should trigger this prompt. This helps the orchestrator route the task correctly.
+- **agent:** Use an OpenCode V2 agent ID. Built-ins are `build`, `plan`,
+  `general`, and `explore`; custom agent IDs are also valid.
 
 ### Skills
 Every skill is a directory `skills/<name>/` containing a `SKILL.md`. The directory name, the frontmatter `name`, and the invocation name must all match.

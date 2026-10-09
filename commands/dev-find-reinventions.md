@@ -2,7 +2,6 @@
 description: Scans a TypeScript/Node repo for (1) duplicated in-repo code
   and (2) custom code duplicating builtin/framework/npm functionality.
   Read-only — reports findings, makes no changes, asks nothing.
-argument-hint: "[path]"
 agent: plan
 ---
 

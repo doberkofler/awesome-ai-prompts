@@ -36,7 +36,6 @@ Network access is required to clone/pull. Offline runs reuse the local copy.
 from __future__ import annotations
 
 import argparse
-import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +44,7 @@ from pathlib import Path
 REPO_URL = "https://github.com/doberkofler/awesome-ai-prompts.git"
 CACHE_DIR = Path.home() / ".ai-rules" / "src"
 STATE_FILE = Path.home() / ".ai-rules" / "installed"
+MANAGED_SKILLS_FILE = Path.home() / ".ai-rules" / "managed-skills"
 
 HOME = Path.home()
 TARGETS = {
@@ -73,14 +73,14 @@ TARGETS = {
 
 ALL_AGENTS = ("opencode", "claude", "codex", "pi")
 
-# The only two skills directories to write, and the legacy dirs this script
-# created before they were consolidated. Obsolete dirs are removed on sync.
+# The only two skills directories to write, and the legacy Pi directory this
+# script created before skills were consolidated. Obsolete dirs are removed on
+# sync. OpenCode's native skills directory is user-owned and must be preserved.
 SKILL_TARGETS = (
     HOME / ".agents" / "skills",
     HOME / ".claude" / "skills",
 )
 OBSOLETE_SKILL_DIRS = (
-    HOME / ".config" / "opencode" / "skills",
     HOME / ".pi" / "agent" / "skills",
 )
 OBSOLETE_RULE_DIRS = (
@@ -90,9 +90,6 @@ OBSOLETE_RULE_DIRS = (
 
 CODEX_DEFAULT_MAX_BYTES = 32768
 CODEX_RECOMMENDED_MAX_BYTES = 65536
-OPENCODE_DOCS_INSTRUCTION = re.compile(
-    r'"instructions"\s*:\s*\[[^\]]*"docs/\*\.md"'
-)
 
 
 def run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -103,9 +100,12 @@ def run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
 
 def script_dir() -> Path | None:
     try:
-        return Path(__file__).resolve().parent
+        script = __file__
     except NameError:  # executed via `python3 -` (stdin)
         return None
+    if script.startswith("<") and script.endswith(">"):
+        return None
+    return Path(script).resolve().parent
 
 
 def git_short_sha(repo: Path) -> str:
@@ -127,36 +127,6 @@ def pull_repo(repo: Path) -> None:
         text = (result.stdout or result.stderr).strip()
         if text:
             print(text)
-
-
-def opencode_docs_instruction_configs(repo: Path) -> list[Path]:
-    configs = (
-        HOME / ".config" / "opencode" / "opencode.json",
-        HOME / ".config" / "opencode" / "opencode.jsonc",
-        repo / "opencode.json",
-        repo / "opencode.jsonc",
-    )
-    matches = []
-    for config in configs:
-        try:
-            text = config.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            continue
-        if OPENCODE_DOCS_INSTRUCTION.search(text):
-            matches.append(config)
-    return matches
-
-
-def warn_opencode_duplicate_rules(repo: Path) -> None:
-    configs = opencode_docs_instruction_configs(repo)
-    if not configs:
-        return
-    print(
-        "\nNOTE: opencode combines ~/.config/opencode/AGENTS.md with matching "
-        'files from "instructions". Remove docs/*.md from:'
-    )
-    for config in configs:
-        print(f"    {config}")
 
 
 def clone_cache() -> Path:
@@ -243,25 +213,77 @@ def distribute_rules(repo: Path, sha: str) -> str:
     return combined
 
 
+def read_managed_skill_names(current_names: set[str]) -> set[str]:
+    if MANAGED_SKILLS_FILE.is_file():
+        return {
+            line.strip()
+            for line in MANAGED_SKILLS_FILE.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+    # Migrate installations made before ownership tracking was introduced.
+    return current_names if STATE_FILE.is_file() else set()
+
+
+def remove_path(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
 def distribute_skills(repo: Path) -> tuple[int, int]:
     skills = skill_dirs(repo)
     names = {s.name for s in skills}
+    managed_names = read_managed_skill_names(names)
     ignore = shutil.ignore_patterns(".DS_Store", "agents")
     total_files = sum(count_files(s) for s in skills)
 
     for dest in SKILL_TARGETS:
+        for skill in skills:
+            target = dest / skill.name
+            if target.exists() and skill.name not in managed_names:
+                sys.exit(
+                    f"refusing to replace unmanaged skill: {target}\n"
+                    "Move or remove it, then run again."
+                )
+
+    for dest in SKILL_TARGETS:
         dest.mkdir(parents=True, exist_ok=True)
-        for child in sorted(dest.iterdir()):
-            if child.is_dir() and child.name not in names:
-                shutil.rmtree(child)
+        for name in sorted(managed_names - names):
+            obsolete = dest / name
+            if obsolete.exists():
+                remove_path(obsolete)
         for skill in skills:
             target = dest / skill.name
             if target.exists():
-                shutil.rmtree(target)
+                remove_path(target)
             shutil.copytree(skill, target, ignore=ignore)
         print(f"skills -> {dest} ({len(skills)} skills)")
 
+    MANAGED_SKILLS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MANAGED_SKILLS_FILE.write_text(
+        "".join(f"{name}\n" for name in sorted(names)), encoding="utf-8"
+    )
     return len(skills), total_files
+
+
+def warn_opencode_skill_overrides(repo: Path) -> None:
+    native = HOME / ".config" / "opencode" / "skills"
+    if not native.is_dir():
+        return
+    overlaps = [
+        skill.name
+        for skill in skill_dirs(repo)
+        if (native / skill.name).exists() or (native / f"{skill.name}.md").is_file()
+    ]
+    if not overlaps:
+        return
+    print(
+        "\nNOTE: native OpenCode skills override matching synced skills from "
+        "~/.agents/skills/:"
+    )
+    for name in overlaps:
+        print(f"    {name}")
 
 
 def distribute_commands(repo: Path) -> int:
@@ -380,7 +402,7 @@ def do_sync() -> int:
     warn_codex_size(combined)
     write_state(repo)
     print_summary(len(doc_files(repo)), skills, skill_files, commands, cleanup)
-    warn_opencode_duplicate_rules(repo)
+    warn_opencode_skill_overrides(repo)
     print(f"\nrecorded {sha} in {STATE_FILE}")
     print("done.")
     return 0
