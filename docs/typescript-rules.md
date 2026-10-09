@@ -39,40 +39,68 @@ runtime boundaries, modules, naming, and API documentation.
 - **Constants**: `UPPER_CASE` for global constants
 
 ## JavaScript
-- Target ES2022
-- Only use ESM
+- Use ES modules only.
+- Choose `target`, `module`, `moduleResolution`, and emit behavior from one compatible
+  compiler profile (see **Compiler profiles**).
 
 ## Type Safety & Configuration
 
 > Type safety is a top priority. Never weaken it for convenience.
 
-- Use the following flags in `tsconfig.json`:
+- Set the universal strictness baseline in `tsconfig.json`:
 
 ```json
 {
 	"strict": true,
-	"noImplicitAny": true,
-	"strictNullChecks": true,
-	"strictFunctionTypes": true,
-	"strictBindCallApply": true,
-	"strictPropertyInitialization": true,
-	"noImplicitThis": true,
-	"useUnknownInCatchVariables": true,
-	"alwaysStrict": true,
 	"noUnusedLocals": true,
 	"noUnusedParameters": true,
 	"noImplicitReturns": true,
 	"noFallthroughCasesInSwitch": true,
 	"noUncheckedIndexedAccess": true,
 	"noImplicitOverride": true,
-	"noPropertyAccessFromIndexSignature": false,
+	"noPropertyAccessFromIndexSignature": true,
 	"exactOptionalPropertyTypes": true,
 	"allowUnreachableCode": false,
 	"allowUnusedLabels": false,
-	"forceConsistentCasingInFileNames": true,
-	"noEmitOnError": true
+	"forceConsistentCasingInFileNames": true
 }
 ```
+
+- `strict` already enables `noImplicitAny`, `strictNullChecks`, `strictFunctionTypes`,
+  `strictBindCallApply`, `strictPropertyInitialization`, `noImplicitThis`,
+  `useUnknownInCatchVariables`, and `alwaysStrict`; do not repeat them unless a scoped
+  override changes one.
+- Enable `noUncheckedIndexedAccess` in the baseline; a project may disable it explicitly
+  only with a scoped statement of the effective setting and reason.
+- Use `noPropertyAccessFromIndexSignature: true` rather than advertising `false` as a
+  strict default.
+- Keep `target`, `module`, `moduleResolution`, and emit options in a compiler profile
+  below, not in the universal baseline.
+
+### Why the baseline relies on `strict`
+
+`strict` is not one check; it enables the entire strict-mode family (`noImplicitAny`,
+`strictNullChecks`, `strictFunctionTypes`, `strictBindCallApply`,
+`strictPropertyInitialization`, `noImplicitThis`, `useUnknownInCatchVariables`,
+`alwaysStrict`, and later additions such as `strictBuiltinIteratorReturn`). Repeating
+those flags next to `strict` is redundant and misleading: the list cannot stay
+exhaustive.
+
+Relying on `strict` is also the safer long-term choice. TypeScript may add stricter
+checks to the `strict` family in a release, so an upgrade can surface errors that were
+previously unchecked. That is the intended signal. The baseline inherits the new check
+instead of silently keeping the weaker behavior because a hand-maintained list omitted it.
+
+- Pin the TypeScript version, and treat new `strict`-family errors after an upgrade as
+  real findings, not as a reason to weaken the configuration.
+- If one specific check must be relaxed, disable that named flag explicitly and record the
+  scope and reason, as required for any override; never replace the baseline with a
+  hand-maintained list of enabled checks.
+- The options that are not part of `strict` stay explicit because the baseline needs them
+  regardless: `noUnusedLocals`, `noUnusedParameters`, `noImplicitReturns`,
+  `noFallthroughCasesInSwitch`, `noUncheckedIndexedAccess`, `noImplicitOverride`,
+  `noPropertyAccessFromIndexSignature`, `exactOptionalPropertyTypes`,
+  `allowUnreachableCode`, `allowUnusedLabels`, and `forceConsistentCasingInFileNames`.
 
 ### Semantic safety
 
@@ -135,6 +163,120 @@ flag, casting to `any`) without:
 1. Demonstrating it is strictly necessary — not merely convenient.
 2. Explicit permission requested and granted before proceeding.
 3. A `NOTE: ` comment at the site stating the justification and what removes it.
+
+## Compiler profiles
+
+Runtime, module, and emit settings belong to a profile, not the universal baseline. Use
+exactly one profile per project or package, and keep inherited options internally
+compatible.
+
+### Bundler-owned application
+
+Use when a bundler owns JavaScript output:
+
+```json
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "Preserve",
+		"moduleResolution": "Bundler",
+		"noEmit": true,
+		"verbatimModuleSyntax": true
+	}
+}
+```
+
+- Add `allowImportingTsExtensions: true` only when the bundler accepts TypeScript
+  extensions.
+- `Preserve` reflects what most modern bundlers and Bun accept. A project that uses
+  `ESNext` instead must record that scoped replacement and its reason.
+
+### Node-compatible ESM
+
+Use `"type": "module"` in `package.json` or `.mts` files, with:
+
+```json
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"verbatimModuleSyntax": true
+	}
+}
+```
+
+- Write runtime JavaScript extensions in TypeScript source:
+  `import {helper} from './helper.js';`.
+- When `tsc` emits the JavaScript, also set `noEmitOnError: true` and an output
+  directory.
+- When another build tool owns output, set `noEmit: true`; do not add
+  `allowImportingTsExtensions` merely to replace runtime `.js` specifiers with `.ts`.
+
+### Direct Node TypeScript execution
+
+For Node's built-in type stripping:
+
+```json
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"erasableSyntaxOnly": true,
+		"verbatimModuleSyntax": true
+	}
+}
+```
+
+- Use explicit TypeScript extensions in relative specifiers.
+- Node recommends TypeScript 5.8 or newer, ignores `tsconfig.json` while executing, does
+  not support `.tsx`, and accepts only erasable syntax: enums, runtime namespaces,
+  parameter properties, and import aliases fail.
+
+### TypeScript extension rewriting
+
+TypeScript 5.7 or newer can rewrite supported relative TypeScript extensions:
+
+```json
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"rewriteRelativeImportExtensions": true,
+		"verbatimModuleSyntax": true,
+		"noEmitOnError": true,
+		"outDir": "dist"
+	}
+}
+```
+
+- Rewriting applies only to supported literal relative paths ending in `.ts`, `.tsx`,
+  `.mts`, or `.cts`.
+- It does not rewrite package imports, path aliases, package import/export mappings,
+  extensionless paths, or computed dynamic-import paths.
+
+### Shared source consumed by bundlers and Node
+
+When the same source is consumed by a bundler and by Node-compatible ESM, use JavaScript
+extensions in relative specifiers:
+
+```typescript
+export {schema} from './schema.js';
+```
+
+Bundlers accept this syntax, while Node-compatible ESM requires the runtime extension.
+Validate shared source with the strictest consumer resolution rather than Bundler
+resolution alone.
+
+### Published libraries
+
+Validate a published library with a consumer-compatible module profile rather than
+Bundler resolution alone. Target the oldest supported runtime, emit declaration files,
+and verify those declarations from representative consumer configurations.
 
 ## Documentation
 
@@ -219,7 +361,37 @@ export const loadUser = (userId: UserId): Promise<User> => { /* ... */ };
 - No duplicate or circular imports.
 - Import types inline: `import {type MyType} from '...'` — not `import type {MyType}`.
 - Named exports/imports only. No default exports.
-- Explicit file extensions in relative imports: `import {helper} from './utils.ts'`.
+- Choose relative import specifiers from the project's compiler and runtime profile; there
+  is no universal extension valid for every TypeScript project.
+
+### Relative import extensions
+
+Select relative import specifiers from the profile that owns resolution:
+
+| Profile | Source specifier |
+| --- | --- |
+| Bundler-owned application | Follow the bundler; extensionless imports are permitted |
+| Node-compatible ESM | Use the runtime `.js`, `.mjs`, or `.cjs` extension |
+| Direct TypeScript execution | Use `.ts`, `.tsx`, `.mts`, or `.cts` where the runtime supports it |
+| TypeScript extension rewriting | Use a TypeScript extension the compiler rewrites |
+| Shared source consumed by bundlers and Node | Use the Node-compatible JavaScript extension |
+
+These rules apply to relative specifiers. Package imports, package subpaths, and project
+aliases are governed by package exports, package imports, or the selected resolver.
+
+```typescript
+// Bundler-owned application
+import {helper} from './helper';
+
+// Node-compatible ESM or shared bundler/Node source
+import {helper} from './helper.js';
+
+// Direct TypeScript execution or extension rewriting
+import {helper} from './helper.ts';
+
+// Package or configured alias
+import {helper} from '@application/helper';
+```
 
 ---
 

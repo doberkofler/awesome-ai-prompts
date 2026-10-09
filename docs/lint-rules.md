@@ -59,7 +59,7 @@ omit the namespace of a configured rule.
 ### Import rules
 
 - Use one import declaration per module, combining value and type imports from the same
-  source: `import {createUser, type User} from './user.ts';`.
+  source: `import {createUser, type User} from 'user-library';`.
 - Use inline type specifiers; do not emit a separate `import type {User} from ...` for a
   source already imported for values.
 - Align `typescript/consistent-type-imports`, `typescript/consistent-type-specifier-style`,

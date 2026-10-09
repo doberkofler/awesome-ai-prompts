@@ -186,6 +186,13 @@ rules (Yoda conditions, declaration placement, complexity thresholds, import gro
 are documented as guidance rather than defects. Classification clarifies intent; it does
 not remove or downgrade any rule.
 
+The compiler-profile guidance distinguishes bundler-owned applications, Node-compatible
+ESM, direct Node TypeScript execution, TypeScript extension rewriting, shared
+bundler/Node source, and published libraries. It was checked against the official
+TypeScript module guidance and the Node.js TypeScript documentation. No profile is
+represented as universally applicable, and no example is claimed to be locally
+compiler-tested.
+
 The domain-oriented skills intentionally use `CONTEXT.md` and `CONTEXT-MAP.md` for
 glossaries and `docs/adr/` for decisions. This differs from upstream's current
 `GLOSSARY` naming and must remain consistent across `domain-modeling`,
