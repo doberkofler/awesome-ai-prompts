@@ -35,15 +35,29 @@ Ownership model:
     overwritten.
   * A recorded path whose content no longer matches its hash is locally
     modified and is never overwritten unless ``--force`` is given.
-  * Only paths from the previous manifest are pruned.
+  * Only paths from the previous manifest, inside the selected scope, are
+    pruned.
   * Global rules files receive a marked repository-owned block; all content
     outside the block is preserved. An existing rules file without the block
     is left intact and the block is appended.
 
+Every run is planned before it mutates anything. ``--dry-run`` prints the plan
+(creates, updates, conflicts, removals, unchanged). A real run writes each
+changed file atomically, keeps a timestamped backup under
+``~/.ai-rules/backups/``, and rolls the whole run back if any mutation fails.
+
+Deployment targets all supported agents by default. ``--agent <name>`` (repeat
+the option for more than one) narrows the run to the named agents and leaves
+every other agent's installed content untouched.
+
 Usage:
-    python3 sync_ai_rules.py            # pull latest and distribute
-    python3 sync_ai_rules.py --check    # report whether the install is current
-    python3 sync_ai_rules.py --force    # overwrite locally modified managed files
+    python3 sync_ai_rules.py                 # pull latest and distribute to all
+    python3 sync_ai_rules.py --dry-run       # print the plan, change nothing
+    python3 sync_ai_rules.py --agent claude  # only Claude Code
+    python3 sync_ai_rules.py --force         # overwrite locally modified files
+    python3 sync_ai_rules.py --uninstall     # remove all managed content
+    python3 sync_ai_rules.py --restore       # restore the most recent backup
+    python3 sync_ai_rules.py --check         # report whether the install is current
 
 Network access is required to clone/pull. Offline runs reuse the local copy.
 """
@@ -52,15 +66,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 REPO_URL = "https://github.com/doberkofler/awesome-ai-prompts.git"
 CACHE_DIR = Path.home() / ".ai-rules" / "src"
 MANIFEST_FILE = Path.home() / ".ai-rules" / "manifest.json"
+BACKUP_DIR = Path.home() / ".ai-rules" / "backups"
 LEGACY_STATE_FILE = Path.home() / ".ai-rules" / "installed"
 LEGACY_MANAGED_SKILLS_FILE = Path.home() / ".ai-rules" / "managed-skills"
 # Backwards-compatible alias used by older callers and checks.
@@ -98,23 +116,30 @@ TARGETS = {
 
 ALL_AGENTS = ("opencode", "claude", "codex", "pi")
 
-# The only two skills directories to write, and the legacy Pi directory this
-# script created before skills were consolidated. Obsolete dirs are removed on
-# sync. OpenCode's native skills directory is user-owned and must be preserved.
-SKILL_TARGETS = (
-    HOME / ".agents" / "skills",
-    HOME / ".claude" / "skills",
-)
-OBSOLETE_SKILL_DIRS = (
-    HOME / ".pi" / "agent" / "skills",
-)
-OBSOLETE_RULE_DIRS = (
-    HOME / ".config" / "opencode" / "docs",
-    HOME / ".claude" / "rules",
+# Which shared skills directory each agent reads.
+AGENT_SKILL_TARGETS = {
+    "opencode": HOME / ".agents" / "skills",
+    "codex": HOME / ".agents" / "skills",
+    "pi": HOME / ".agents" / "skills",
+    "claude": HOME / ".claude" / "skills",
+}
+
+# Legacy directories earlier versions of this installer created. Each is gated
+# by the agent it belonged to. OpenCode's native skills directory is user-owned
+# and is never removed.
+OBSOLETE_DIRS = (
+    ("pi", HOME / ".pi" / "agent" / "skills"),
+    ("opencode", HOME / ".config" / "opencode" / "docs"),
+    ("claude", HOME / ".claude" / "rules"),
 )
 
 CODEX_DEFAULT_MAX_BYTES = 32768
 CODEX_RECOMMENDED_MAX_BYTES = 65536
+
+
+# ---------------------------------------------------------------------------
+# Repository resolution
+# ---------------------------------------------------------------------------
 
 
 def run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -179,7 +204,7 @@ def resolve_repo(pull: bool) -> Path:
         return here
     if pull:
         return clone_cache()
-    # --check: clone if needed, but never pull over the working copy
+    # --check / --uninstall / --restore: clone if needed, never pull.
     if (CACHE_DIR / ".git").is_dir():
         return CACHE_DIR
     return clone_cache()
@@ -227,6 +252,33 @@ def rel_to_home(path: Path) -> str:
 
 def abs_from_home(relative: str) -> Path:
     return HOME / Path(relative)
+
+
+def is_under(path: Path, directory: Path) -> bool:
+    try:
+        path.relative_to(directory)
+        return True
+    except ValueError:
+        return False
+
+
+def selected_agents(requested: list[str] | None) -> tuple[str, ...]:
+    if not requested:
+        return ALL_AGENTS
+    selected: list[str] = []
+    for name in requested:
+        if name not in ALL_AGENTS:
+            sys.exit(
+                f"unknown agent: {name}\n"
+                f"choose from: {', '.join(ALL_AGENTS)}"
+            )
+        if name not in selected:
+            selected.append(name)
+    return tuple(selected)
+
+
+def selected_skill_targets(agents: tuple[str, ...]) -> tuple[Path, ...]:
+    return tuple(dict.fromkeys(AGENT_SKILL_TARGETS[agent] for agent in agents))
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +358,7 @@ def migrate_legacy_manifest(repo: Path, sha: str) -> Manifest:
             if first_line and first_line[0].startswith(LEGACY_MARKER_PREFIX):
                 manifest.blocks[rel_to_home(dest)] = {"sha256": ""}
 
-    for dest in SKILL_TARGETS:
+    for dest in set(AGENT_SKILL_TARGETS.values()):
         for name in read_legacy_managed_skill_names():
             directory = dest / name
             if not directory.is_dir():
@@ -346,60 +398,198 @@ def load_manifest(repo: Path, sha: str) -> Manifest:
 
 
 def save_manifest(manifest: Manifest) -> None:
+    text = manifest.to_json()
+    if MANIFEST_FILE.is_file() and MANIFEST_FILE.read_text(encoding="utf-8") == text:
+        return
     MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST_FILE.write_text(manifest.to_json(), encoding="utf-8")
+    atomic_write_bytes(MANIFEST_FILE, text.encode("utf-8"))
+
+
+def remove_legacy_state() -> None:
+    for legacy in (LEGACY_STATE_FILE, LEGACY_MANAGED_SKILLS_FILE):
+        if legacy.is_file():
+            legacy.unlink()
 
 
 # ---------------------------------------------------------------------------
-# Ownership classification and refusal helpers
+# Plan model: what a run intends to do, computed before any mutation
 # ---------------------------------------------------------------------------
 
 
-def classify(relative: str, manifest: Manifest) -> str:
-    """Return the ownership state of a HOME-relative path.
+@dataclass
+class Action:
+    op: str  # create | update | remove
+    kind: str  # rules | command | skill | obsolete
+    relative: str
+    data: bytes | None = None
+    note: str = ""
 
-    One of ``absent``, ``managed``, ``modified``, ``missing``, or ``unmanaged``.
-    """
-    entry = manifest.files.get(relative)
-    target = abs_from_home(relative)
-    if not target.is_file():
-        return "missing" if entry is not None else "absent"
-    if entry is None:
-        return "unmanaged"
-    return "managed" if sha256_file(target) == entry["sha256"] else "modified"
-
-
-def refuse_unmanaged(path: Path, kind: str) -> None:
-    sys.exit(
-        f"refusing to replace unmanaged {kind}: {path}\n"
-        "It is not recorded as managed by this repository.\n"
-        "Move or remove it, then run again."
-    )
+    @property
+    def target(self) -> Path:
+        return abs_from_home(self.relative)
 
 
-def refuse_modified(path: Path, kind: str) -> None:
-    sys.exit(
-        f"refusing to replace locally modified {kind}: {path}\n"
-        "Re-run with --force to overwrite your changes."
-    )
+@dataclass
+class Conflict:
+    kind: str
+    relative: str
+    reason: str  # unmanaged | modified | malformed
+
+    def message(self) -> str:
+        path = abs_from_home(self.relative)
+        if self.reason == "unmanaged":
+            return (
+                f"refusing to replace unmanaged {self.kind}: {path}\n"
+                "It is not recorded as managed by this repository.\n"
+                "Move or remove it, then run again."
+            )
+        if self.reason == "modified":
+            return (
+                f"refusing to replace locally modified {self.kind}: {path}\n"
+                "Re-run with --force to overwrite your changes."
+            )
+        return f"cannot install {self.kind}: {path}\n{self.reason}"
 
 
-def preflight_files(
-    desired: dict[str, bytes], manifest: Manifest, kind: str, force: bool
-) -> None:
-    """Refuse the whole run before mutating anything if any target conflicts."""
+@dataclass
+class Plan:
+    actions: list[Action] = field(default_factory=list)
+    conflicts: list[Conflict] = field(default_factory=list)
+    unchanged: list[tuple[str, str]] = field(default_factory=list)
+    kept: list[tuple[str, str]] = field(default_factory=list)
+    managed_files: list[tuple[str, str, str]] = field(default_factory=list)
+    cleared_roots: list[str] = field(default_factory=list)
+    block_hashes: dict[str, str] = field(default_factory=dict)
+    skill_count: int = 0
+    skill_files: int = 0
+
+
+def merge_plans(plans: list[Plan]) -> Plan:
+    merged = Plan()
+    for plan in plans:
+        merged.actions.extend(plan.actions)
+        merged.conflicts.extend(plan.conflicts)
+        merged.unchanged.extend(plan.unchanged)
+        merged.kept.extend(plan.kept)
+        merged.managed_files.extend(plan.managed_files)
+        merged.cleared_roots.extend(plan.cleared_roots)
+        merged.block_hashes.update(plan.block_hashes)
+        merged.skill_count += plan.skill_count
+        merged.skill_files += plan.skill_files
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# Planners
+# ---------------------------------------------------------------------------
+
+
+def plan_file_set(
+    desired: dict[str, bytes],
+    manifest: Manifest,
+    kind: str,
+    force: bool,
+    roots: tuple[Path, ...],
+) -> Plan:
+    """Plan per-file creates, updates, conflicts, and managed prunes."""
+    plan = Plan()
+    plan.cleared_roots = [rel_to_home(root) for root in roots]
+
     for relative in sorted(desired):
         target = abs_from_home(relative)
-        state = classify(relative, manifest)
-        if state == "unmanaged":
-            refuse_unmanaged(target, kind)
-        if state == "modified" and not force:
-            refuse_modified(target, kind)
+        entry = manifest.files.get(relative)
+        if target.is_file():
+            if entry is None:
+                plan.conflicts.append(Conflict(kind, relative, "unmanaged"))
+            elif sha256_file(target) != entry["sha256"]:
+                if force:
+                    plan.actions.append(
+                        Action(
+                            "update",
+                            kind,
+                            relative,
+                            desired[relative],
+                            "overwrite local changes",
+                        )
+                    )
+                else:
+                    plan.conflicts.append(Conflict(kind, relative, "modified"))
+            elif target.read_bytes() != desired[relative]:
+                plan.actions.append(Action("update", kind, relative, desired[relative]))
+            else:
+                plan.unchanged.append((kind, relative))
+        elif target.exists():
+            # A directory occupies a path where a file belongs.
+            plan.conflicts.append(Conflict(kind, relative, "unmanaged"))
+        else:
+            plan.actions.append(Action("create", kind, relative, desired[relative]))
+
+    for relative in sorted(manifest.files):
+        entry = manifest.files[relative]
+        if entry.get("kind") != kind:
+            continue
+        if not any(is_under(abs_from_home(relative), root) for root in roots):
+            continue
+        if relative in desired:
+            continue
+        target = abs_from_home(relative)
+        if not target.is_file():
+            plan.unchanged.append((kind, relative))
+        elif sha256_file(target) == entry["sha256"]:
+            plan.actions.append(Action("remove", kind, relative, None, "obsolete"))
+        else:
+            plan.kept.append((kind, relative))
+
+    for relative, data in desired.items():
+        plan.managed_files.append((relative, kind, sha256_bytes(data)))
+    return plan
 
 
-# ---------------------------------------------------------------------------
-# Rules: a marked managed block inside each agent's global rules file
-# ---------------------------------------------------------------------------
+def plan_commands(
+    repo: Path, manifest: Manifest, agents: tuple[str, ...], force: bool
+) -> Plan:
+    desired: dict[str, bytes] = {}
+    for agent in agents:
+        directory = TARGETS[agent]["commands"]
+        for source in command_files(repo):
+            desired[rel_to_home(directory / source.name)] = source.read_bytes()
+    roots = tuple(TARGETS[agent]["commands"] for agent in agents)
+    return plan_file_set(desired, manifest, "command", force, roots)
+
+
+def skill_payload(skill: Path) -> dict[str, bytes]:
+    """Return the distributable files of a skill, keyed by relative path.
+
+    Only a top-level ``agents/`` directory and ``.DS_Store`` files are omitted;
+    a nested ``agents/`` directory is legitimate content.
+    """
+    payload: dict[str, bytes] = {}
+    for path in sorted(skill.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(skill)
+        if relative.parts and relative.parts[0] == "agents":
+            continue
+        if path.name == ".DS_Store":
+            continue
+        payload[relative.as_posix()] = path.read_bytes()
+    return payload
+
+
+def plan_skills(
+    repo: Path, manifest: Manifest, targets: tuple[Path, ...], force: bool
+) -> Plan:
+    skills = skill_dirs(repo)
+    payloads = {skill.name: skill_payload(skill) for skill in skills}
+    desired: dict[str, bytes] = {}
+    for dest in targets:
+        for skill in skills:
+            for relative, data in payloads[skill.name].items():
+                desired[rel_to_home(dest / skill.name / relative)] = data
+    plan = plan_file_set(desired, manifest, "skill", force, targets)
+    plan.skill_count = len(skills)
+    plan.skill_files = sum(len(files) for files in payloads.values())
+    return plan
 
 
 def rules_body(repo: Path) -> str:
@@ -429,192 +619,395 @@ def replace_block(text: str, block: str) -> str:
     return text[:start] + block.rstrip("\n") + text[end:]
 
 
-def distribute_rules(repo: Path, manifest: Manifest, force: bool) -> str:
+def remove_block(text: str) -> str:
+    start = text.index(BLOCK_BEGIN)
+    end = text.index(BLOCK_END) + len(BLOCK_END)
+    before = text[:start].rstrip("\n")
+    after = text[end:].lstrip("\n")
+    if before and after:
+        return before + "\n\n" + after
+    if before:
+        return before + "\n"
+    return after
+
+
+def _rules_change(
+    plan: Plan, key: str, existing: str, new_text: str, note: str
+) -> None:
+    if not new_text.endswith("\n"):
+        new_text += "\n"
+    if new_text == existing:
+        plan.unchanged.append(("rules", key))
+    else:
+        plan.actions.append(
+            Action("update", "rules", key, new_text.encode("utf-8"), note)
+        )
+
+
+def plan_rules(
+    repo: Path, manifest: Manifest, agents: tuple[str, ...], force: bool
+) -> Plan:
     body = rules_body(repo)
     block = render_block(body)
     body_hash = sha256_bytes(body.encode("utf-8"))
+    plan = Plan()
 
-    for agent in ALL_AGENTS:
+    for agent in agents:
         dest = TARGETS[agent]["rules"]
         key = rel_to_home(dest)
 
         if not dest.exists():
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(block, encoding="utf-8")
-            print(f"rules  -> {dest} (created)")
+            plan.actions.append(
+                Action("create", "rules", key, block.encode("utf-8"), "managed block")
+            )
         else:
             existing = dest.read_text(encoding="utf-8")
             if has_block(existing):
                 previous_hash = manifest.blocks.get(key, {}).get("sha256", "")
                 current_hash = sha256_bytes(block_body(existing).encode("utf-8"))
                 if previous_hash and previous_hash != current_hash and not force:
-                    refuse_modified(dest, "rules block")
-                new_text = replace_block(existing, block)
-                print(f"rules  -> {dest} (updated)")
+                    plan.conflicts.append(Conflict("rules block", key, "modified"))
+                    continue
+                _rules_change(plan, key, existing, replace_block(existing, block), "")
             elif existing.lstrip().startswith(LEGACY_MARKER_PREFIX):
-                new_text = block
-                print(f"rules  -> {dest} (migrated legacy file)")
+                _rules_change(plan, key, existing, block, "migrate legacy file")
             elif BLOCK_BEGIN in existing or BLOCK_END in existing:
-                sys.exit(
-                    f"malformed managed block in {dest}: expected exactly one "
-                    f"{BLOCK_BEGIN!r} and one {BLOCK_END!r} marker."
+                plan.conflicts.append(
+                    Conflict(
+                        "rules block",
+                        key,
+                        "malformed block: expected exactly one BEGIN and one END marker",
+                    )
                 )
+                continue
             elif not existing.strip():
-                new_text = block
-                print(f"rules  -> {dest} (created)")
+                _rules_change(plan, key, existing, block, "")
             else:
-                new_text = existing.rstrip("\n") + "\n\n" + block
-                print(f"rules  -> {dest} (appended; existing content preserved)")
-            if not new_text.endswith("\n"):
-                new_text += "\n"
-            dest.write_text(new_text, encoding="utf-8")
+                _rules_change(
+                    plan,
+                    key,
+                    existing,
+                    existing.rstrip("\n") + "\n\n" + block,
+                    "append; existing content preserved",
+                )
 
-        manifest.blocks[key] = {"sha256": body_hash}
+        plan.block_hashes[key] = body_hash
 
-    return body
+    return plan
+
+
+def plan_obsolete(repo: Path, agents: tuple[str, ...]) -> Plan:
+    """Plan removal of legacy directories created by older installer versions."""
+    plan = Plan()
+    managed_docs = {path.name for path in doc_files(repo)}
+    for agent, directory in OBSOLETE_DIRS:
+        if agent not in agents or not directory.is_dir():
+            continue
+        for path in sorted(directory.rglob("*")):
+            if path.is_file():
+                if directory.name in ("docs", "rules"):
+                    if path.name not in managed_docs and path.name != ".DS_Store":
+                        continue
+                plan.actions.append(
+                    Action("remove", "obsolete", rel_to_home(path), None, "legacy path")
+                )
+    return plan
 
 
 # ---------------------------------------------------------------------------
-# Skills: per-file, sidecar exclusion limited to <skill-root>/agents/
+# Executor: atomic writes, backup, and rollback
 # ---------------------------------------------------------------------------
 
 
-def skill_payload(skill: Path) -> dict[str, bytes]:
-    """Return the distributable files of a skill, keyed by relative path.
-
-    Only a top-level ``agents/`` directory and ``.DS_Store`` files are omitted;
-    a nested ``agents/`` directory is legitimate content.
-    """
-    payload: dict[str, bytes] = {}
-    for path in sorted(skill.rglob("*")):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(skill)
-        if relative.parts and relative.parts[0] == "agents":
-            continue
-        if path.name == ".DS_Store":
-            continue
-        payload[relative.as_posix()] = path.read_bytes()
-    return payload
+def ensure_parent(directory: Path, created: set[Path]) -> None:
+    missing: list[Path] = []
+    current = directory
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+    for path in reversed(missing):
+        path.mkdir()
+        created.add(path)
 
 
-def prune_empty_skill_dirs(dest: Path) -> None:
-    for child in sorted(dest.rglob("*"), key=lambda p: len(p.parts), reverse=True):
-        if child.is_dir() and not any(child.iterdir()):
-            child.rmdir()
-            print(f"cleanup -> removed {child}")
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(data)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
 
 
-def distribute_skills(
-    repo: Path, manifest: Manifest, force: bool
-) -> tuple[int, int]:
-    skills = skill_dirs(repo)
-    payloads = {skill.name: skill_payload(skill) for skill in skills}
-    total_files = sum(len(files) for files in payloads.values())
-
-    desired: dict[str, bytes] = {}
-    for dest in SKILL_TARGETS:
-        for skill in skills:
-            for relative, data in payloads[skill.name].items():
-                desired[rel_to_home(dest / skill.name / relative)] = data
-
-    preflight_files(desired, manifest, "skill", force)
-
-    # Prune only files this repository previously wrote and no longer produces.
-    for relative in sorted(manifest.files):
-        entry = manifest.files[relative]
-        if entry.get("kind") != "skill" or relative in desired:
-            continue
-        target = abs_from_home(relative)
-        if not target.is_file():
-            continue
-        if sha256_file(target) == entry["sha256"]:
+def apply_action(action: Action, created: set[Path]) -> None:
+    target = action.target
+    if action.op == "remove":
+        if target.is_file():
             target.unlink()
-            print(f"remove -> {target}")
-        else:
-            print(f"NOTE: keeping locally modified managed skill file: {target}")
+        return
+    if action.data is None:
+        raise ValueError(f"action {action.op} for {action.relative} has no data")
+    ensure_parent(target.parent, created)
+    atomic_write_bytes(target, action.data)
 
-    for relative, data in sorted(desired.items()):
+
+def capture_originals(actions: list[Action]) -> dict[str, bytes | None]:
+    originals: dict[str, bytes | None] = {}
+    for action in actions:
+        target = action.target
+        originals[action.relative] = target.read_bytes() if target.is_file() else None
+    manifest_relative = rel_to_home(MANIFEST_FILE)
+    originals.setdefault(
+        manifest_relative,
+        MANIFEST_FILE.read_bytes() if MANIFEST_FILE.is_file() else None,
+    )
+    return originals
+
+
+def rollback(originals: dict[str, bytes | None], created: set[Path]) -> bool:
+    ok = True
+    for relative, data in originals.items():
         target = abs_from_home(relative)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+        try:
+            if data is None:
+                if target.is_file():
+                    target.unlink()
+            else:
+                ensure_parent(target.parent, set())
+                atomic_write_bytes(target, data)
+        except OSError:
+            ok = False
+    for directory in sorted(created, key=lambda p: len(p.parts), reverse=True):
+        try:
+            if directory.is_dir() and not any(directory.iterdir()):
+                directory.rmdir()
+        except OSError:
+            ok = False
+    return ok
 
-    for dest in SKILL_TARGETS:
-        for skill in skills:
-            (dest / skill.name).mkdir(parents=True, exist_ok=True)
-        prune_empty_skill_dirs(dest)
 
-    manifest.files = {
-        key: value
-        for key, value in manifest.files.items()
-        if value.get("kind") != "skill"
-    }
-    for relative, data in desired.items():
-        manifest.files[relative] = {
-            "sha256": sha256_bytes(data),
-            "kind": "skill",
+def create_backup(actions: list[Action], label: str) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    base = f"{timestamp}-{os.getpid()}-{label}"
+    name = base
+    counter = 1
+    while (BACKUP_DIR / name).exists():
+        name = f"{base}-{counter}"
+        counter += 1
+    directory = BACKUP_DIR / name
+    files_dir = directory / "files"
+    entries: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    for action in actions:
+        if action.relative in seen:
+            continue
+        seen.add(action.relative)
+        target = action.target
+        existed = target.is_file()
+        entries.append(
+            {
+                "relative": action.relative,
+                "kind": action.kind,
+                "op": action.op,
+                "existed": existed,
+            }
+        )
+        if existed:
+            dest = files_dir / action.relative
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, dest)
+
+    manifest_relative = rel_to_home(MANIFEST_FILE)
+    manifest_existed = MANIFEST_FILE.is_file()
+    entries.append(
+        {
+            "relative": manifest_relative,
+            "kind": "manifest",
+            "op": "update",
+            "existed": manifest_existed,
         }
+    )
+    if manifest_existed:
+        dest = files_dir / manifest_relative
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(MANIFEST_FILE, dest)
 
-    for dest in SKILL_TARGETS:
-        print(f"skills -> {dest} ({len(skills)} skills)")
-    return len(skills), total_files
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "backup.json").write_text(
+        json.dumps(
+            {"label": label, "timestamp": timestamp, "entries": entries},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return directory
+
+
+def prune_empty_parents(removed: list[Path], roots: list[tuple[Path, bool]]) -> None:
+    for path in removed:
+        for root, allow_root in roots:
+            if not is_under(path, root):
+                continue
+            current = path.parent
+            while (
+                current != root
+                and is_under(current, root)
+                and current.is_dir()
+                and not any(current.iterdir())
+            ):
+                current.rmdir()
+                print(f"cleanup -> removed {current}")
+                current = current.parent
+            if allow_root and root.is_dir() and not any(root.iterdir()):
+                root.rmdir()
+                print(f"cleanup -> removed {root}")
+            break
+
+
+def apply_run(
+    actions: list[Action],
+    label: str,
+    prune_roots: list[tuple[Path, bool]],
+    finalize,
+) -> int:
+    if not actions:
+        finalize()
+        return 0
+
+    backup = create_backup(actions, label)
+    originals = capture_originals(actions)
+    created: set[Path] = set()
+    try:
+        for action in actions:
+            apply_action(action, created)
+        removed = [action.target for action in actions if action.op == "remove"]
+        prune_empty_parents(removed, prune_roots)
+        finalize()
+    except OSError as error:
+        restored = rollback(originals, created)
+        if restored:
+            shutil.rmtree(backup, ignore_errors=True)
+        print(f"ERROR: {error}", file=sys.stderr)
+        if restored:
+            print(
+                "the run failed and every change was rolled back.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"the run failed. Rollback was incomplete; backup kept at {backup}",
+                file=sys.stderr,
+            )
+        return 1
+    return 0
 
 
 # ---------------------------------------------------------------------------
-# Commands: per-file ownership and pruning of obsolete managed commands
+# Plan and summary reporting
 # ---------------------------------------------------------------------------
 
 
-def desired_command_files(repo: Path) -> dict[str, bytes]:
-    desired: dict[str, bytes] = {}
-    sources = command_files(repo)
-    for agent in ALL_AGENTS:
-        directory = TARGETS[agent]["commands"]
-        for source in sources:
-            desired[rel_to_home(directory / source.name)] = source.read_bytes()
-    return desired
+def print_plan(plan: Plan, dry_run: bool) -> None:
+    print("dry run:" if dry_run else "plan:")
+    for op, label in (("create", "create"), ("update", "update"), ("remove", "remove")):
+        for action in plan.actions:
+            if action.op != op:
+                continue
+            note = f"  ({action.note})" if action.note else ""
+            print(f"  {label:<7} {action.kind:<9} {action.target}{note}")
+    for conflict in plan.conflicts:
+        print(
+            f"  conflict {conflict.kind:<9} "
+            f"{abs_from_home(conflict.relative)}  ({conflict.reason})"
+        )
+    for kind, relative in plan.kept:
+        print(f"  kept     {kind:<9} {abs_from_home(relative)}  (locally modified)")
+    if dry_run:
+        for kind, relative in plan.unchanged:
+            print(f"  unchanged {kind:<9} {abs_from_home(relative)}")
+    if not plan.actions and not plan.conflicts and not plan.kept:
+        print("  (nothing to do)")
 
 
-def distribute_commands(repo: Path, manifest: Manifest, force: bool) -> int:
-    desired = desired_command_files(repo)
-    preflight_files(desired, manifest, "command", force)
+def report_conflicts(plan: Plan) -> None:
+    print(
+        "installation blocked by conflicting targets:",
+        file=sys.stderr,
+    )
+    for conflict in plan.conflicts:
+        print(file=sys.stderr)
+        print(conflict.message(), file=sys.stderr)
 
-    for relative in sorted(manifest.files):
-        entry = manifest.files[relative]
-        if entry.get("kind") != "command" or relative in desired:
-            continue
-        target = abs_from_home(relative)
-        if not target.is_file():
-            continue
-        if sha256_file(target) == entry["sha256"]:
-            target.unlink()
-            print(f"remove -> {target}")
-        else:
-            print(f"NOTE: keeping locally modified managed command: {target}")
 
-    for relative, data in sorted(desired.items()):
-        target = abs_from_home(relative)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+# ---------------------------------------------------------------------------
+# Manifest application
+# ---------------------------------------------------------------------------
 
-    manifest.files = {
-        key: value
-        for key, value in manifest.files.items()
-        if value.get("kind") != "command"
-    }
-    for relative, data in desired.items():
-        manifest.files[relative] = {
-            "sha256": sha256_bytes(data),
-            "kind": "command",
+
+def apply_manifest(manifest: Manifest, plan: Plan, repo: str) -> None:
+    for root in plan.cleared_roots:
+        root_path = abs_from_home(root)
+        manifest.files = {
+            key: value
+            for key, value in manifest.files.items()
+            if not is_under(abs_from_home(key), root_path)
         }
+    for relative, kind, digest in plan.managed_files:
+        manifest.files[relative] = {"sha256": digest, "kind": kind}
+    for key, digest in plan.block_hashes.items():
+        manifest.blocks[key] = {"sha256": digest}
+    manifest.repo = repo
 
-    count = len(command_files(repo))
-    for agent in ALL_AGENTS:
-        print(f"cmds   -> {TARGETS[agent]['commands']} ({count} files)")
-    return count
+
+# ---------------------------------------------------------------------------
+# Sync
+# ---------------------------------------------------------------------------
 
 
-def warn_opencode_skill_overrides(repo: Path) -> None:
+def plural(count: int, singular: str, plural_form: str | None = None) -> str:
+    word = singular if count == 1 else (plural_form or singular + "s")
+    return f"{count} {word}"
+
+
+def read_codex_max_bytes(config: Path) -> int:
+    if not config.is_file():
+        return CODEX_DEFAULT_MAX_BYTES
+    for line in config.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line.startswith("project_doc_max_bytes"):
+            _, _, value = line.partition("=")
+            try:
+                return int(value.strip())
+            except ValueError:
+                return CODEX_DEFAULT_MAX_BYTES
+    return CODEX_DEFAULT_MAX_BYTES
+
+
+def warn_codex_size(body: str) -> None:
+    path = TARGETS["codex"]["rules"]
+    size = len(body.encode("utf-8"))
+    limit = read_codex_max_bytes(TARGETS["codex"]["config"])
+    if size >= limit:
+        print()
+        print(f"WARNING: {path} is {size} bytes but project_doc_max_bytes={limit}.")
+        print("Codex will truncate instructions. Add this to ~/.codex/config.toml:")
+        print(f"    project_doc_max_bytes = {CODEX_RECOMMENDED_MAX_BYTES}")
+
+
+def warn_opencode_skill_overrides(repo: Path, agents: tuple[str, ...]) -> None:
+    if "opencode" not in agents:
+        return
     native = HOME / ".config" / "opencode" / "skills"
     if not native.is_dir():
         return
@@ -633,115 +1026,250 @@ def warn_opencode_skill_overrides(repo: Path) -> None:
         print(f"    {name}")
 
 
-def remove_managed_docs(directory: Path, managed: set[str]) -> bool:
-    leftovers = []
-    for entry in sorted(directory.iterdir()):
-        if entry.is_file() and (entry.name in managed or entry.name == ".DS_Store"):
-            entry.unlink()
-        else:
-            leftovers.append(entry)
-    if not any(directory.iterdir()):
-        directory.rmdir()
-        print(f"cleanup -> removed {directory}")
-        return True
-    if leftovers:
-        kept = ", ".join(sorted(p.name for p in leftovers))
-        print(f"NOTE: {directory} kept (unmanaged entries remain): {kept}")
-    return False
-
-
-def cleanup_obsolete(repo: Path) -> int:
-    removed = 0
-    for directory in OBSOLETE_SKILL_DIRS:
-        if directory.is_dir():
-            shutil.rmtree(directory)
-            print(f"cleanup -> removed {directory}")
-            removed += 1
-    managed = {p.name for p in doc_files(repo)}
-    for directory in OBSOLETE_RULE_DIRS:
-        if directory.is_dir() and remove_managed_docs(directory, managed):
-            removed += 1
-    return removed
-
-
-def read_codex_max_bytes(config: Path) -> int:
-    if not config.is_file():
-        return CODEX_DEFAULT_MAX_BYTES
-    for line in config.read_text(encoding="utf-8").splitlines():
-        line = line.split("#", 1)[0].strip()
-        if line.startswith("project_doc_max_bytes"):
-            _, _, value = line.partition("=")
-            try:
-                return int(value.strip())
-            except ValueError:
-                return CODEX_DEFAULT_MAX_BYTES
-    return CODEX_DEFAULT_MAX_BYTES
-
-
-def warn_codex_size(combined: str) -> None:
-    path = TARGETS["codex"]["rules"]
-    size = len(combined.encode("utf-8"))
-    limit = read_codex_max_bytes(TARGETS["codex"]["config"])
-    if size >= limit:
-        print()
-        print(f"WARNING: {path} is {size} bytes but project_doc_max_bytes={limit}.")
-        print("Codex will truncate instructions. Add this to ~/.codex/config.toml:")
-        print(f"    project_doc_max_bytes = {CODEX_RECOMMENDED_MAX_BYTES}")
-
-
-def plural(count: int, singular: str, plural_form: str | None = None) -> str:
-    word = singular if count == 1 else (plural_form or singular + "s")
-    return f"{count} {word}"
-
-
-def print_inventory(repo: Path) -> None:
-    skills = skill_dirs(repo)
-    docs = doc_files(repo)
-    commands = command_files(repo)
-    print("inventory")
-    print(f"  rules     {plural(len(docs), 'doc')}")
-    print(f"  skills    {plural(len(skills), 'skill')}")
-    print(f"  commands  {plural(len(commands), 'command')}")
-
-
 def print_summary(
+    plan: Plan,
     docs: int,
     skills: int,
-    skill_files: int,
     commands: int,
-    cleanup: int,
+    agents: tuple[str, ...],
 ) -> None:
     print()
     print("summary")
-    print(f"  rules     {plural(docs, 'doc')} -> {len(ALL_AGENTS)} locations")
+    print(f"  agents    {', '.join(agents)}")
+    print(f"  rules     {plural(docs, 'doc')} -> {len(agents)} locations")
     print(
-        f"  skills    {plural(skills, 'skill')} ({plural(skill_files, 'file')}) -> "
-        f"{len(SKILL_TARGETS)} locations"
+        f"  skills    {plural(skills, 'skill')} ({plural(plan.skill_files, 'file')})"
+        f" -> {len(selected_skill_targets(agents))} locations"
     )
-    print(f"  commands  {plural(commands, 'command')} -> {len(ALL_AGENTS)} locations")
-    print(f"  cleanup   {plural(cleanup, 'path')} removed")
+    print(f"  commands  {plural(commands, 'command')} -> {len(agents)} locations")
 
 
-def do_sync(force: bool) -> int:
+def sync_prune_roots(
+    agents: tuple[str, ...], skill_targets: tuple[Path, ...]
+) -> list[tuple[Path, bool]]:
+    roots = [(TARGETS[agent]["commands"], False) for agent in agents]
+    roots.extend((target, False) for target in skill_targets)
+    roots.extend(
+        (directory, True) for agent, directory in OBSOLETE_DIRS if agent in agents
+    )
+    return roots
+
+
+def do_sync(force: bool, agents: tuple[str, ...], dry_run: bool) -> int:
     repo = resolve_repo(pull=True)
     sha = git_short_sha(repo)
     print(f"source: {repo} @ {sha}\n")
     manifest = load_manifest(repo, sha)
-    combined = distribute_rules(repo, manifest, force)
-    skills, skill_files = distribute_skills(repo, manifest, force)
-    commands = distribute_commands(repo, manifest, force)
-    cleanup = cleanup_obsolete(repo)
-    warn_codex_size(combined)
-    manifest.repo = sha
-    save_manifest(manifest)
-    for legacy in (LEGACY_STATE_FILE, LEGACY_MANAGED_SKILLS_FILE):
-        if legacy.is_file():
-            legacy.unlink()
-    print_summary(len(doc_files(repo)), skills, skill_files, commands, cleanup)
-    warn_opencode_skill_overrides(repo)
+    skill_targets = selected_skill_targets(agents)
+
+    plan = merge_plans(
+        [
+            plan_rules(repo, manifest, agents, force),
+            plan_commands(repo, manifest, agents, force),
+            plan_skills(repo, manifest, skill_targets, force),
+            plan_obsolete(repo, agents),
+        ]
+    )
+
+    if dry_run:
+        print_plan(plan, dry_run=True)
+        return 0
+
+    if plan.conflicts:
+        report_conflicts(plan)
+        return 1
+
+    print_plan(plan, dry_run=False)
+
+    def finalize() -> None:
+        apply_manifest(manifest, plan, sha)
+        save_manifest(manifest)
+        remove_legacy_state()
+
+    status = apply_run(
+        plan.actions, "sync", sync_prune_roots(agents, skill_targets), finalize
+    )
+    if status != 0:
+        return status
+
+    if "codex" in agents:
+        warn_codex_size(rules_body(repo))
+    print_summary(
+        plan,
+        len(doc_files(repo)),
+        len(skill_dirs(repo)),
+        len(command_files(repo)),
+        agents,
+    )
+    warn_opencode_skill_overrides(repo, agents)
     print(f"\nrecorded {sha} in {MANIFEST_FILE}")
     print("done.")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Uninstall
+# ---------------------------------------------------------------------------
+
+
+def plan_uninstall(
+    repo: Path, manifest: Manifest, agents: tuple[str, ...], force: bool
+) -> tuple[Plan, Manifest]:
+    plan = Plan()
+    command_roots = [TARGETS[agent]["commands"] for agent in agents]
+    skill_roots = list(selected_skill_targets(agents))
+    rule_keys = {rel_to_home(TARGETS[agent]["rules"]) for agent in agents}
+
+    remaining_files: dict[str, dict[str, str]] = {}
+    remaining_blocks: dict[str, dict[str, str]] = {}
+
+    for relative, entry in sorted(manifest.files.items()):
+        target = abs_from_home(relative)
+        in_scope = any(is_under(target, root) for root in command_roots) or any(
+            is_under(target, root) for root in skill_roots
+        )
+        if not in_scope:
+            remaining_files[relative] = entry
+            continue
+        if not target.is_file():
+            continue
+        kind = entry.get("kind", "file")
+        if sha256_file(target) == entry["sha256"]:
+            plan.actions.append(Action("remove", kind, relative, None, "uninstall"))
+        elif force:
+            plan.actions.append(
+                Action("remove", kind, relative, None, "uninstall (forced)")
+            )
+        else:
+            plan.kept.append((kind, relative))
+            remaining_files[relative] = entry
+
+    for key, entry in sorted(manifest.blocks.items()):
+        target = abs_from_home(key)
+        if key not in rule_keys:
+            remaining_blocks[key] = entry
+            continue
+        if not target.is_file():
+            continue
+        text = target.read_text(encoding="utf-8")
+        if not has_block(text):
+            remaining_blocks[key] = entry
+            continue
+        current = sha256_bytes(block_body(text).encode("utf-8"))
+        if entry.get("sha256") and entry["sha256"] != current and not force:
+            plan.kept.append(("rules block", key))
+            remaining_blocks[key] = entry
+            continue
+        new_text = remove_block(text)
+        if not new_text.strip():
+            plan.actions.append(Action("remove", "rules", key, None, "uninstall"))
+        else:
+            plan.actions.append(
+                Action("update", "rules", key, new_text.encode("utf-8"), "uninstall block")
+            )
+
+    plan.actions.extend(plan_obsolete(repo, agents).actions)
+    remaining = Manifest(
+        repo=manifest.repo, files=remaining_files, blocks=remaining_blocks
+    )
+    return plan, remaining
+
+
+def do_uninstall(agents: tuple[str, ...], force: bool, dry_run: bool) -> int:
+    if (
+        not MANIFEST_FILE.is_file()
+        and not LEGACY_STATE_FILE.is_file()
+        and not LEGACY_MANAGED_SKILLS_FILE.is_file()
+    ):
+        print("nothing to uninstall (no manifest found).")
+        return 0
+
+    repo = resolve_repo(pull=False)
+    sha = git_short_sha(repo)
+    manifest = load_manifest(repo, sha)
+    plan, remaining = plan_uninstall(repo, manifest, agents, force)
+
+    if dry_run:
+        print_plan(plan, dry_run=True)
+        return 0
+
+    print_plan(plan, dry_run=False)
+    skill_targets = selected_skill_targets(agents)
+
+    def finalize() -> None:
+        if remaining.files or remaining.blocks:
+            save_manifest(remaining)
+        elif MANIFEST_FILE.is_file():
+            MANIFEST_FILE.unlink()
+        remove_legacy_state()
+
+    if remaining.files or remaining.blocks:
+        print(
+            "\nNOTE: locally modified content was kept and remains recorded "
+            "in the manifest."
+        )
+
+    prune_roots = [(TARGETS[agent]["commands"], True) for agent in agents]
+    prune_roots.extend((target, True) for target in skill_targets)
+    prune_roots.extend(
+        (directory, True) for agent, directory in OBSOLETE_DIRS if agent in agents
+    )
+
+    status = apply_run(plan.actions, "uninstall", prune_roots, finalize)
+    if status != 0:
+        return status
+    print("\nuninstall complete.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Restore
+# ---------------------------------------------------------------------------
+
+
+def do_restore(name: str) -> int:
+    if name == "latest":
+        if not BACKUP_DIR.is_dir():
+            sys.exit("no backups found.")
+        candidates = sorted(path for path in BACKUP_DIR.iterdir() if path.is_dir())
+        if not candidates:
+            sys.exit("no backups found.")
+        directory = candidates[-1]
+    else:
+        directory = BACKUP_DIR / name
+    if not directory.is_dir():
+        sys.exit(f"backup not found: {directory}")
+
+    try:
+        data = json.loads((directory / "backup.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        sys.exit(f"cannot read backup {directory}: {error}")
+
+    restored = 0
+    for entry in data.get("entries", []):
+        target = abs_from_home(str(entry["relative"]))
+        if entry.get("existed"):
+            source = directory / "files" / str(entry["relative"])
+            atomic_write_bytes(target, source.read_bytes())
+            restored += 1
+        elif target.is_file():
+            target.unlink()
+            restored += 1
+
+    print(f"restored {plural(restored, 'path')} from {directory}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Check
+# ---------------------------------------------------------------------------
+
+
+def print_inventory(repo: Path) -> None:
+    print("inventory")
+    print(f"  rules     {plural(len(doc_files(repo)), 'doc')}")
+    print(f"  skills    {plural(len(skill_dirs(repo)), 'skill')}")
+    print(f"  commands  {plural(len(command_files(repo)), 'command')}")
 
 
 def read_installed_revision() -> str:
@@ -781,6 +1309,11 @@ def do_check() -> int:
     return 0 if installed == upstream_sha else 1
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Distribute local AI rules.")
     parser.add_argument(
@@ -789,12 +1322,45 @@ def main() -> int:
         help="compare the installed revision with the upstream revision",
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the plan without changing anything",
+    )
+    parser.add_argument(
+        "--agent",
+        action="append",
+        dest="agents",
+        metavar="AGENT",
+        help=f"limit the run to an agent (repeatable): {', '.join(ALL_AGENTS)}",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="overwrite locally modified managed files without prompting",
     )
+    parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="remove all repository-managed content",
+    )
+    parser.add_argument(
+        "--restore",
+        nargs="?",
+        const="latest",
+        metavar="BACKUP",
+        help="restore an installer-created backup (default: latest)",
+    )
     args = parser.parse_args()
-    return do_check() if args.check else do_sync(args.force)
+
+    if args.restore is not None:
+        return do_restore(args.restore)
+    if args.check:
+        return do_check()
+
+    agents = selected_agents(args.agents)
+    if args.uninstall:
+        return do_uninstall(agents, args.force, args.dry_run)
+    return do_sync(args.force, agents, args.dry_run)
 
 
 if __name__ == "__main__":

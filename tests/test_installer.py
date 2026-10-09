@@ -5,6 +5,7 @@ temporary fixture source tree, so they never touch the operator's configuration.
 """
 from __future__ import annotations
 
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -346,6 +347,204 @@ class HomeIsolationTests(InstallerTestCase):
         self.assertEqual(before, after)
         self.assertIn(str(self.fx.home), result.stdout)
         self.assertFalse((self.fx.home / ".ai-rules" / "src").exists())
+
+
+class DryRunTests(InstallerTestCase):
+    def test_dry_run_reports_plan_and_changes_nothing(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        before = harness.snapshot(self.fx.home, harness.INSTALL_TARGETS)
+
+        self.fx.set_doc("rules.md", "# Rules\n\nChanged body.\n")
+        self.fx.set_command(
+            "new.md", "---\ndescription: N.\nagent: plan\n---\nnew\n"
+        )
+        self.fx.remove_command("cmd.md")
+
+        result = self.fx.run("--dry-run")
+        self.assertEqual(0, result.returncode, result.stderr)
+        output = result.stdout
+        self.assertIn("dry run:", output)
+        self.assertIn("create", output)
+        self.assertIn("update", output)
+        self.assertIn("remove", output)
+        self.assertIn("unchanged", output)
+        self.assertIn("new.md", output)
+        self.assertIn("cmd.md", output)
+
+        after = harness.snapshot(self.fx.home, harness.INSTALL_TARGETS)
+        self.assertEqual(before, after)
+
+        self.assertEqual(0, self.fx.run().returncode)
+        self.assertIn("Changed body.", self.fx.rules("opencode").read_text())
+        for agent in harness.COMMAND_DIRS:
+            self.assertTrue((self.fx.commands_dir(agent) / "new.md").is_file())
+            self.assertFalse((self.fx.commands_dir(agent) / "cmd.md").exists())
+
+    def test_dry_run_reports_conflicts_without_failing(self) -> None:
+        path = self.fx.commands_dir("opencode") / "cmd.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("LOCAL\n", encoding="utf-8")
+
+        result = self.fx.run("--dry-run")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("conflict", result.stdout)
+        self.assertEqual("LOCAL\n", path.read_text(encoding="utf-8"))
+
+
+class AgentSelectionTests(InstallerTestCase):
+    def test_single_agent_limits_targets(self) -> None:
+        result = self.fx.run("--agent", "claude")
+        self.assertEqual(0, result.returncode, result.stderr)
+
+        self.assertTrue(self.fx.rules("claude").is_file())
+        for other in ("opencode", "codex", "pi"):
+            self.assertFalse(self.fx.rules(other).exists())
+        self.assertTrue((self.fx.commands_dir("claude") / "cmd.md").is_file())
+        for other in ("opencode", "codex", "pi"):
+            self.assertFalse(self.fx.commands_dir(other).exists())
+        self.assertTrue(
+            (self.fx.skill(Path(".claude/skills"), "alpha") / "SKILL.md").is_file()
+        )
+        self.assertFalse((self.fx.home / Path(".agents/skills")).exists())
+
+    def test_multiple_agents_share_skills_directory(self) -> None:
+        result = self.fx.run("--agent", "opencode", "--agent", "pi")
+        self.assertEqual(0, result.returncode, result.stderr)
+
+        self.assertTrue(self.fx.rules("opencode").is_file())
+        self.assertTrue(self.fx.rules("pi").is_file())
+        self.assertFalse(self.fx.rules("claude").exists())
+        self.assertFalse(self.fx.rules("codex").exists())
+        self.assertTrue(
+            (self.fx.skill(harness.SKILL_DIRS[0], "alpha") / "SKILL.md").is_file()
+        )
+        self.assertFalse((self.fx.home / Path(".claude/skills")).exists())
+
+    def test_unknown_agent_is_rejected(self) -> None:
+        result = self.fx.run("--agent", "bogus")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("unknown agent", result.stderr)
+
+    def test_selected_run_leaves_other_agents_untouched(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        claude_rules = self.fx.rules("claude").read_bytes()
+        claude_command = (self.fx.commands_dir("claude") / "cmd.md").read_bytes()
+
+        self.assertEqual(0, self.fx.run("--agent", "opencode").returncode)
+
+        self.assertEqual(claude_rules, self.fx.rules("claude").read_bytes())
+        self.assertEqual(
+            claude_command,
+            (self.fx.commands_dir("claude") / "cmd.md").read_bytes(),
+        )
+        self.assertIn(".claude/CLAUDE.md", self.fx.manifest()["blocks"])
+
+
+class RollbackTests(InstallerTestCase):
+    def test_failed_mutation_rolls_back_every_change(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        self.fx.set_doc("rules.md", "# Rules\n\nChanged body.\n")
+
+        # Occupy a command file path's parent with a regular file so the write
+        # fails partway through the run, after the rules files are updated.
+        commands = self.fx.commands_dir("opencode")
+        shutil.rmtree(commands)
+        commands.write_text("not a directory\n", encoding="utf-8")
+
+        before = harness.snapshot(self.fx.home, harness.INSTALL_TARGETS)
+        result = self.fx.run()
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("rolled back", result.stderr)
+        self.assertNotIn("Changed body.", self.fx.rules("opencode").read_text())
+        after = harness.snapshot(self.fx.home, harness.INSTALL_TARGETS)
+        self.assertEqual(before, after)
+
+
+class UninstallTests(InstallerTestCase):
+    def test_uninstall_removes_only_managed_content(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        user_command = self.fx.commands_dir("opencode") / "user.md"
+        user_command.write_text("USER\n", encoding="utf-8")
+        rules = self.fx.rules("opencode")
+        rules.write_text(
+            "# PERSONAL\n\n" + rules.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+        result = self.fx.run("--uninstall")
+        self.assertEqual(0, result.returncode, result.stderr)
+
+        self.assertTrue(user_command.is_file())
+        text = rules.read_text(encoding="utf-8")
+        self.assertIn("# PERSONAL", text)
+        self.assertNotIn(BLOCK_BEGIN, text)
+        self.assertFalse(self.fx.manifest_file().exists())
+        for agent in harness.COMMAND_DIRS:
+            self.assertFalse((self.fx.commands_dir(agent) / "cmd.md").exists())
+        for directory in harness.SKILL_DIRS:
+            self.assertFalse(self.fx.skill(directory, "alpha").exists())
+
+    def test_uninstall_keeps_locally_modified_file(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        target = self.fx.commands_dir("opencode") / "cmd.md"
+        target.write_text("LOCAL\n", encoding="utf-8")
+
+        result = self.fx.run("--uninstall")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("LOCAL\n", target.read_text(encoding="utf-8"))
+        self.assertTrue(self.fx.manifest_file().is_file())
+        self.assertFalse((self.fx.commands_dir("claude") / "cmd.md").exists())
+
+    def test_uninstall_force_removes_modified_file(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        target = self.fx.commands_dir("opencode") / "cmd.md"
+        target.write_text("LOCAL\n", encoding="utf-8")
+
+        result = self.fx.run("--uninstall", "--force")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertFalse(target.exists())
+
+    def test_uninstall_one_agent_leaves_others(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+
+        result = self.fx.run("--uninstall", "--agent", "claude")
+        self.assertEqual(0, result.returncode, result.stderr)
+
+        self.assertFalse(self.fx.rules("claude").exists())
+        self.assertTrue(self.fx.rules("opencode").is_file())
+        self.assertFalse((self.fx.commands_dir("claude") / "cmd.md").exists())
+        self.assertTrue((self.fx.commands_dir("opencode") / "cmd.md").is_file())
+        self.assertTrue(
+            (self.fx.skill(harness.SKILL_DIRS[0], "alpha") / "SKILL.md").is_file()
+        )
+
+
+class RestoreTests(InstallerTestCase):
+    def test_uninstall_then_restore_round_trip(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        rules_before = self.fx.rules("opencode").read_bytes()
+        command_before = (self.fx.commands_dir("opencode") / "cmd.md").read_bytes()
+        skill_before = (
+            self.fx.skill(SKILL_PRIMARY, "alpha") / "SKILL.md"
+        ).read_bytes()
+
+        self.assertEqual(0, self.fx.run("--uninstall").returncode)
+        self.assertFalse(self.fx.manifest_file().exists())
+        self.assertFalse(self.fx.rules("opencode").exists())
+        self.assertFalse((self.fx.commands_dir("opencode") / "cmd.md").exists())
+
+        result = self.fx.run("--restore", "latest")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(rules_before, self.fx.rules("opencode").read_bytes())
+        self.assertEqual(
+            command_before,
+            (self.fx.commands_dir("opencode") / "cmd.md").read_bytes(),
+        )
+        self.assertEqual(
+            skill_before,
+            (self.fx.skill(SKILL_PRIMARY, "alpha") / "SKILL.md").read_bytes(),
+        )
+        self.assertTrue(self.fx.manifest_file().is_file())
 
 
 if __name__ == "__main__":

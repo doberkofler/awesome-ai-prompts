@@ -36,13 +36,15 @@ SKILL_DIRS = (
     Path(".claude/skills"),
 )
 
-# Real-home paths the installer must never mutate during tests.
+# Real-home paths the installer must never mutate during tests. The same set
+# describes the managed layout under a temporary HOME.
 REAL_HOME_TARGETS = (
     *RULE_PATHS.values(),
     *COMMAND_DIRS.values(),
     *SKILL_DIRS,
     Path(".ai-rules"),
 )
+INSTALL_TARGETS = REAL_HOME_TARGETS
 
 
 def _digest(path: Path) -> str:
@@ -132,3 +134,10 @@ class InstallerFixture:
 
     def manifest(self) -> dict[str, object]:
         return json.loads(self.manifest_file().read_text(encoding="utf-8"))
+
+    def backups_dir(self) -> Path:
+        return self.home / ".ai-rules" / "backups"
+
+    def latest_backup(self) -> Path:
+        candidates = sorted(p for p in self.backups_dir().iterdir() if p.is_dir())
+        return candidates[-1]

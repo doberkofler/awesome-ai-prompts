@@ -194,10 +194,25 @@ Ownership is explicit. A target path that exists but is not recorded in the mani
 is user-owned and is never overwritten. A recorded path whose content no longer
 matches its recorded hash is locally modified; unless `--force` is given, the run
 stops before mutating anything. Pruning removes only paths recorded as managed by the
-previous manifest, so unrelated and locally added files survive installation, update,
-and removal. The first run after an upgrade migrates the previous `installed` and
-`managed-skills` files: paths the old installer managed are adopted with their current
-content as the baseline, then refreshed.
+previous manifest and inside the selected scope, so unrelated and locally added files
+survive installation, update, and removal. The first run after an upgrade migrates the
+previous `installed` and `managed-skills` files: paths the old installer managed are
+adopted with their current content as the baseline, then refreshed.
+
+Every run is planned before it mutates anything:
+
+- `--dry-run` prints the exact plan (creates, updates, conflicts, removals, unchanged)
+  and changes nothing, including on a conflicting target;
+- `--agent <name>` (repeatable) limits the run to named agents and leaves every other
+  agent's installed content untouched; the default remains all agents;
+- each changed file is written atomically;
+- a timestamped backup of every touched path is written under `~/.ai-rules/backups/`
+  before the first mutation;
+- if any mutation fails, the whole run is rolled back and the backup is discarded;
+- `--uninstall` removes only manifest-owned, unmodified content and preserves content
+  outside the managed block; locally modified managed files are kept unless `--force`
+  is given;
+- `--restore [BACKUP]` restores an installer-created backup (default: latest).
 
 The script uses user-level directories, symlinks no content, and requires no
 administrator rights. It also removes only legacy paths that earlier versions of this
