@@ -164,6 +164,11 @@ documentation. Verify version-sensitive claims against primary vendor documentat
 before changing them. Record an external source here if a future document is imported
 or substantially adapted from one.
 
+The TypeScript policy has one ownership chain: `typescript-rules.md` is the canonical
+language and runtime-safety baseline, `lint-rules.md` defines its Oxlint/Oxfmt tooling
+implementation, and `react-rules.md` adds only React-specific design rules. Projects
+may replace a baseline rule only with an explicit scoped override and reason.
+
 The domain-oriented skills intentionally use `CONTEXT.md` and `CONTEXT-MAP.md` for
 glossaries and `docs/adr/` for decisions. This differs from upstream's current
 `GLOSSARY` naming and must remain consistent across `domain-modeling`,

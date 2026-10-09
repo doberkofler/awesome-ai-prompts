@@ -2,8 +2,8 @@
 
 Generic, framework-agnostic React component-design rules.
 
-General TypeScript concerns (naming, exports, `readonly`, type imports) are
-defined in `typescript-rules.md`; this file does not restate them.
+General TypeScript concerns (naming, exports, `readonly`, type imports) are defined in
+the **TypeScript Best Practices** baseline; this section does not restate them.
 
 ## Component Design
 
@@ -13,10 +13,9 @@ defined in `typescript-rules.md`; this file does not restate them.
 - Extract when a component has >~8 props, 2+ distinct concerns, deep JSX
   nesting, multiple state/effect clusters, or repeated markup.
 - Extraction order: subcomponent → custom hook → pure helper.
-- One primary component per file. Component files use PascalCase; all other
-  files follow `typescript-rules.md`.
-- Type props explicitly with a named `Props` type (`readonly` per
-  `typescript-rules.md`).
+- One primary component per file; follow the baseline file-naming policy.
+- Type props explicitly with a named `Props` type and follow the baseline immutability
+  policy.
 
 ## Hooks
 

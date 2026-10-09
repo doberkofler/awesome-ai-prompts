@@ -6,14 +6,27 @@ You are an expert TypeScript developer who writes clean, maintainable code that 
 
 **Keep in Mind**: The code will be parsed using TypeScript compiler with strict type checking enabled and should adhere to modern ECMAScript standards.
 
-## Stylistic
+## Scope and precedence
 
-- Use tabs, semicolons, single quotes
+This document is the canonical TypeScript baseline for language use, type safety,
+runtime boundaries, modules, naming, and API documentation.
+
+- Use the **Oxlint and Oxfmt Configuration** section to implement this policy; that
+  section does not redefine it.
+- Use the **React Component Rules** section only for React-specific design.
+- A project may override this baseline only through a local rule that states the
+  affected scope, effective replacement policy, and reason.
+- Apply the baseline wherever a project has no explicit override.
+
+## Formatting and naming
+
+- Let Oxfmt enforce tabs, semicolons, single quotes, spacing, and wrapping.
 - Never omit curly braces around blocks, even when they are optional
 
 ### Naming Conventions
 - **Variables/Functions**: `camelCase`
-- **Files**: `camelCase` (e.g., `user.ts`, `supplierInvoice.ts`)
+- **Files**: `camelCase` (e.g., `user.ts`, `supplierInvoice.ts`); named React component
+  files use `PascalCase.tsx`
 - **Constants**: `UPPER_CASE` for global constants
 
 ## JavaScript
@@ -52,6 +65,32 @@ You are an expert TypeScript developer who writes clean, maintainable code that 
 }
 ```
 
+### Semantic safety
+
+Enforce these language constraints through Oxlint:
+
+- Use strict equality and an explicit radix.
+- Use `const` by default and never use `var`.
+- Reject `eval`, implied evaluation, `new Function`, `with`, and native-object
+  extension.
+- Throw `Error` objects rather than literals.
+- Reject variable shadowing and invalid derived-class construction.
+- Keep direct environment access inside the project's runtime boundary.
+- Reject floating and misused promises, unsafe `any` operations, array deletion,
+  dynamic property deletion, unnecessary assertions and constraints, duplicate union
+  constituents, wrapper object types, invalid thrown values, and unbound methods.
+- Require explicit module-boundary types and explicit member accessibility.
+
+Treat complexity limits as advisory signals, not correctness failures. Default warning
+thresholds are complexity 30, nesting depth 10, 1,300 lines, 10 parameters, 150
+statements, and 10 nested callbacks. Projects may override these thresholds explicitly.
+
+Use conventional rather than Yoda conditions, declare variables at the top of their
+scope, use property dot notation except for snake-case keys, and reject implicit
+coercion except explicit boolean coercion with `!!`. Report `prefer-const` as a warning.
+Do not require template literals, object shorthand, spread syntax, import sorting, or
+bans on increments and numeric literals.
+
 ### Suppression Rules
 
 - **Never** use `// @ts-ignore` or `// @ts-expect-error` without:
@@ -63,34 +102,6 @@ You are an expert TypeScript developer who writes clean, maintainable code that 
   3. Adding a `NOTE: ` comment at the suppression site explaining the justification
 
 Treat any suppression as a last resort, not a workaround.
-
-## ESLint
-
-Recommended rules to enforce (beyond `@typescript-eslint/recommended-type-checked`):
-
-```jsonc
-{
-  "@typescript-eslint/no-explicit-any": "error",
-  "@typescript-eslint/no-unsafe-assignment": "error",
-  "@typescript-eslint/no-unsafe-call": "error",
-  "@typescript-eslint/no-unsafe-member-access": "error",
-  "@typescript-eslint/no-unsafe-return": "error",
-  "@typescript-eslint/no-unsafe-argument": "error",
-  "@typescript-eslint/consistent-type-imports": ["error", {"prefer": "type-imports", "fixStyle": "inline-type-imports"}],
-  "@typescript-eslint/consistent-type-exports": "error",
-  "@typescript-eslint/no-import-type-side-effects": "error",
-  "no-restricted-syntax": [
-    "error",
-    {
-      // Rule 1: Disallow JSON.parse without Zod validation
-      "selector": "CallExpression[callee.object.name='JSON'][callee.property.name='parse']",
-      "message": "JSON.parse is forbidden without Zod runtime validation. Use a Zod schema's .parse() or .safeParse() on the result instead."
-    }
-  ]
-}
-```
-
-> The `no-restricted-syntax` rule on `JSON.parse` enforces that all JSON deserialization goes through a Zod schema. There is no safe exception — even "internal" JSON can be malformed. If you believe you have a genuine exception, ask before adding an eslint-disable.
 
 ## Documentation
 - Use JSDoc (`/** ... */`) for all exported functions and types

@@ -1,145 +1,40 @@
-# ESLint Configuration Overview
+# Oxlint and Oxfmt Configuration
 
-This document describes the ESLint setup, rule philosophy, and directory-specific behavior.
+This document defines how static-analysis and formatting tools implement the
+**TypeScript Best Practices** baseline. It does not define competing
+language, type-safety, naming, module, runtime-boundary, or API-documentation policy.
 
----
+## Ownership
 
-## 1. Base Configuration
+| Owner | Responsibility |
+| --- | --- |
+| TypeScript | Authoritative type and module correctness |
+| Oxlint | Semantic static analysis |
+| Oxfmt | Formatting |
 
-### Ignored Paths
+Do not configure Oxlint rules that compete with Oxfmt over formatting. Do not treat
+Oxlint as a replacement for the TypeScript compiler's type and module checks.
 
-The following are excluded from linting:
+## Oxlint
 
-- All dotfiles (`**/.*`)
-- `dist/**`
-- `temp/**`
-- `node_modules/**`
+- Configure Oxlint through the project's Oxlint configuration.
+- Translate the canonical TypeScript and framework policies into semantic rules.
+- Keep file scopes, runtime globals, ignored paths, generated-code exclusions, and
+  project-specific exceptions in configuration rather than duplicating policy here.
+- Report stale suppression directives and unused inline configuration.
 
-### Linter Options
+The canonical suppression and runtime-boundary requirements remain in **TypeScript Best
+Practices**. React-specific behavior remains in **React Component Rules**.
 
-- `reportUnusedDisableDirectives`: `warn`
-- `reportUnusedInlineConfigs`: `warn`
+## Oxfmt
 
-Ensures stale `eslint-disable` and inline overrides are surfaced.
+- Configure Oxfmt as the sole formatting owner for supported authored files.
+- Keep indentation, semicolons, quotes, spacing, wrapping, and trailing-comma choices
+  in Oxfmt configuration.
+- Exclude generated, vendored, and unsupported files instead of adding competing
+  formatter rules to Oxlint.
 
----
+## Project overrides
 
-## 2. Extended Presets
-
-The configuration builds on:
-
-- `@eslint/js` (recommended)
-- `typescript-eslint`  
-	- `strictTypeChecked`
-	- `stylisticTypeChecked`
-- `eslint-plugin-unicorn` (recommended)
-- `eslint-plugin-regexp` (`flat/recommended`)
-- `eslint-plugin-react` (`flat/all`)
-- `eslint-plugin-react-hooks`
-- `eslint-plugin-jsdoc` (TypeScript presets)
-- `@vitest/eslint-plugin` (recommended in unit tests)
-- `eslint-plugin-playwright` (recommended in e2e tests)
-- `eslint-plugin-import-x`
-
-Type-aware linting is enabled via `parserOptions.project`.
-
----
-
-## 3. JavaScript Rules
-
-### Safety and Correctness
-
-Strict enforcement:
-
-- `eqeqeq`
-- `no-eval`
-- `no-implied-eval`
-- `no-new-func`
-- `no-throw-literal`
-- `no-shadow`
-- `no-with`
-- `constructor-super`
-- `no-extend-native`
-- `no-process-env`
-- `no-var`
-- `radix`
-- `yoda: never`
-
-Prevents unsafe, ambiguous, or legacy patterns.
-
-### Control Flow & Complexity
-
-Warn-only thresholds:
-
-- `complexity: 30`
-- `max-depth: 10`
-- `max-lines: 1300`
-- `max-params: 10`
-- `max-statements: 150`
-- `max-nested-callbacks: 10`
-
-Designed to surface architectural issues without blocking.
-
-### Style Decisions
-
-- `curly: all`
-- `unicode-bom: never`
-- `vars-on-top`
-- `dot-notation` (with snake_case allowance)
-- `prefer-const: warn`
-- `no-implicit-coercion` (except `!!`)
-
-Several stylistic rules intentionally disabled:
-- `prefer-template`
-- `prefer-spread`
-- `object-shorthand`
-- `sort-imports`
-- `no-plusplus`
-- `no-magic-numbers`
-
-Formatting is assumed to be handled by Prettier.
-
----
-
-## 4. TypeScript Rules
-
-Type-aware linting enabled globally.
-
-### Strictness
-
-Errors on:
-
-- `no-explicit-any` (rest args allowed)
-- `no-floating-promises`
-- `no-misused-promises`
-- `no-array-delete`
-- `no-dynamic-delete`
-- `no-duplicate-type-constituents`
-- `no-unnecessary-type-assertion`
-- `no-unnecessary-type-constraint`
-- `no-wrapper-object-types`
-- `only-throw-error`
-- `require-await`
-- `unbound-method`
-- `explicit-module-boundary-types`
-- `explicit-member-accessibility`
-
-Encourages explicit, safe type modeling.
-
-### Imports & Types
-
-- `consistent-type-imports`
-- `consistent-type-exports`
-- `no-require-imports`
-- `import-x/no-commonjs`
-- `import-x/no-duplicates`
-
-ESM-only, no CommonJS.
-
-### `@ts-expect-error` Policy
-
-Enforced format:
-
-```ts
-// @ts-expect-error ts(1234) FIXME: explanation
-```
+Project configuration may differ from the baseline. Keep each difference explicit and
+scoped, and document the effective replacement policy and reason in the project rules.

@@ -139,11 +139,11 @@ Concatenated in filename order into each agent's global rules file.
 | Document | Focus |
 | --- | --- |
 | [general-guidelines.md](docs/general-guidelines.md) | Persona, clarification protocol, verbosity, validation sources |
-| [lint-rules.md](docs/lint-rules.md) | ESLint configuration and rule philosophy |
+| [lint-rules.md](docs/lint-rules.md) | Oxlint static-analysis and Oxfmt formatting configuration |
 | [mui-rules.md](docs/mui-rules.md) | Material UI usage, theming, and color schemes |
 | [react-rules.md](docs/react-rules.md) | React component and hook design |
 | [sql-plsql-rules.md](docs/sql-plsql-rules.md) | SQL and PL/SQL coding standards |
-| [typescript-rules.md](docs/typescript-rules.md) | TypeScript best practices and Zod validation |
+| [typescript-rules.md](docs/typescript-rules.md) | Canonical TypeScript baseline and Zod validation |
 
 ### Commands (`commands/`)
 
