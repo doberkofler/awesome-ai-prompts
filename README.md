@@ -58,24 +58,8 @@ Optional alias: `alias ai-rules='python3 ~/.ai-rules/src/sync_ai_rules.py'`.
 
 ### Notes
 
-- No symlinks and no admin rights; only the user-level directories above are written.
-- Codex reads a single concatenated `~/.codex/AGENTS.md`. If the script prints a size
-  warning, add the suggested `project_doc_max_bytes` line to `~/.codex/config.toml`.
-- Codex custom prompts (`~/.codex/prompts/`) are deprecated by Codex; skills are the
-  durable mechanism and are distributed to all agents.
-- OpenCode V2 accepts an `instructions` setting but does not currently load it;
-  `~/.config/opencode/AGENTS.md` is the active global instruction source.
-- Skills removed from `skills/` are pruned from both shared skills directories only
-  when this script previously installed them. Unrelated skills are preserved.
-- OpenCode's native `~/.config/opencode/skills/` directory is never modified. A native
-  skill with the same ID overrides the synced copy, and the script reports that overlap.
-- The script removes the legacy `~/.config/opencode/docs/`, `~/.claude/rules/`, and
-  `~/.pi/agent/skills/` directories it previously created.
-- Skills that model the domain (`domain-modeling`, `grill-with-docs`, `wait-what`,
-  `tdd`, `diagnosing-bugs`) assume `CONTEXT.md` and `docs/adr/` at the repo root, or
-  `CONTEXT-MAP.md` pointing to per-context `CONTEXT.md` files. Create them lazily.
-- Skills are adapted from [mattpocock/skills](https://github.com/mattpocock/skills) and
-  kept flattened as `skills/<name>/`.
+See [`PROVENANCE.md`](PROVENANCE.md) for content origins, intentional adaptations,
+upstream maintenance, and distribution behavior.
 
 ## General Meta-Prompts
 

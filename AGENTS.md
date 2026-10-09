@@ -26,6 +26,7 @@ Currently, this repository consists of Markdown documentation and prompt protoco
   - Check that new prompts do not duplicate functionality of existing prompts.
   - Ensure that if a prompt is referenced by a command, that command exists and is documented.
   - Ensure every skill referenced by another skill (e.g. `grill-me` → `grilling`) exists in `skills/`.
+  - Read and update [`PROVENANCE.md`](PROVENANCE.md) when changing `docs/`, adopting or updating a skill, or changing distribution behavior.
 - **Distribution:**
   - After changing `docs/`, `commands/`, or `skills/`, run `python3 sync_ai_rules.py --check` and require `status: up to date` before finishing.
 - **Single File "Test":** 
@@ -75,9 +76,9 @@ disable-model-invocation: true   # only for user-invoked skills
 - **disable-model-invocation:** Set to `true` for skills only the user should trigger (no always-loaded description). Omit for model-invoked skills.
 - **Bundled files:** Reference sibling files (e.g. `CONTEXT-FORMAT.md`) with relative links; copy the whole directory, never a lone `SKILL.md`.
 - **Invocation:** A user-invoked skill sets `disable-model-invocation: true` and may reach model-invoked skills, never another user-invoked skill. A model-invoked skill keeps a `description` and may be reached by the agent, the user, or other skills.
-- **Domain docs:** Skills that model the domain (`domain-modeling`, `grill-with-docs`, `wait-what`, `tdd`, `diagnosing-bugs`) assume the convention `CONTEXT.md` (glossary) and `docs/adr/` (decisions) at the repo root, or `CONTEXT-MAP.md` pointing to per-context `CONTEXT.md` files. Create them lazily; never put implementation detail in `CONTEXT.md`.
-- **Agent runtime:** Some skills delegate to sub-agents (`research` to a background agent; `codebase-design` design-it-twice and, upstream, `code-review` to parallel agents). If the runtime cannot background a task, run it as a normal sub-agent and say so.
-- **Upstream:** Skills are adapted from <https://github.com/mattpocock/skills>. Keep them flattened as `skills/<name>/`; do not copy upstream's per-skill `agents/` sidecars.
+- **Agent runtime:** Some skills delegate to sub-agents (`research` to a background
+  agent; `codebase-design` design-it-twice and `code-review` to parallel agents).
+  If the runtime cannot background a task, run it as a normal sub-agent and say so.
 
 ### Writing Style for Prompts
 - **Imperative Voice:** Use strong, direct verbs. Start instructions with "STOP.", "Identify.", "Search.", or "Verify.".
