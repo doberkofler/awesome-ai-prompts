@@ -164,6 +164,10 @@ documentation. Verify version-sensitive claims against primary vendor documentat
 before changing them. Record an external source here if a future document is imported
 or substantially adapted from one.
 
+Examples in the TypeScript documents are guidance; the repository never compiles, lints,
+or tests them. Consuming projects own their configurations, dependency versions,
+lockfiles, and tests, so no example is claimed to be locally verified.
+
 The TypeScript policy has one ownership chain: `typescript-rules.md` is the canonical
 language and runtime-safety baseline, `lint-rules.md` defines its Oxlint/Oxfmt tooling
 implementation, and `react-rules.md` adds only React-specific design rules. Suppression

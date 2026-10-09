@@ -17,6 +17,9 @@ runtime boundaries, modules, naming, and API documentation.
 - A project may override this baseline only through a local rule that states the
   affected scope, effective replacement policy, and reason.
 - Apply the baseline wherever a project has no explicit override.
+- Treat the examples here as guidance. This repository distributes rules; it does not
+  compile, lint, or test them. A consuming project owns its toolchain, dependency
+  versions, lockfile, and tests, so no example is claimed to be locally verified.
 
 ## Formatting and naming
 

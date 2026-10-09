@@ -16,6 +16,10 @@ The tools enforce the baseline; they never redefine it. Do not configure Oxlint 
 that compete with Oxfmt over formatting. Do not treat Oxlint as a replacement for the
 TypeScript compiler's type and module checks.
 
+Configuration here is guidance for the consuming project. This repository does not run
+Oxlint or Oxfmt; the project owns its configuration, dependency versions, lockfile, and
+verification.
+
 ### Replacement invariant
 
 Never disable a base JavaScript rule unless its TypeScript-aware replacement is enabled

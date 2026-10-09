@@ -130,6 +130,19 @@ both to the GitHub release.
 See [`PROVENANCE.md`](PROVENANCE.md) for content origins, intentional adaptations,
 upstream maintenance, distribution behavior, and the release process.
 
+### Verification
+
+This repository distributes documentation. It has no Node toolchain and does not compile,
+lint, or test the TypeScript examples. Verify a change with:
+
+```bash
+python3 -m unittest discover -s tests -t .
+git diff --check
+python3 sync_ai_rules.py --check
+```
+
+Distribution integrity must report `ok`.
+
 ## What gets installed
 
 ### Rules (`docs/`)
