@@ -214,6 +214,20 @@ Every run is planned before it mutates anything:
   is given;
 - `--restore [BACKUP]` restores an installer-created backup (default: latest).
 
+`--check` reports two independent statuses and exits nonzero when either is unhappy:
+
+- **repository** compares the revision recorded in the manifest with the fetched
+  upstream revision (`up to date`, `update available`, or `unknown`);
+- **integrity** compares every managed path against its recorded SHA-256 and the
+  current source, and lists, separately, `modified` (content changed), `missing`
+  (deleted, or rules block markers gone), `unexpected` (an unmanaged file where the
+  source wants one), and `obsolete` (managed paths the source no longer distributes)
+  artifacts. An unreadable or absent manifest, a legacy-only install, or an
+  unresolvable upstream revision is an unavailable required check and also exits
+  nonzero.
+
+The check never mutates installed content.
+
 The script uses user-level directories, symlinks no content, and requires no
 administrator rights. It also removes only legacy paths that earlier versions of this
 repository managed.
@@ -227,5 +241,6 @@ distribution target.
 After changing `docs/`, `skills/`, or distribution behavior:
 
 1. Run `python3 sync_ai_rules.py`.
-2. Run `python3 sync_ai_rules.py --check` and require `status: up to date`.
+2. Run `python3 sync_ai_rules.py --check` and require `repository` status `up to date`
+   and `integrity` status `ok`.
 3. Resolve every validation or size warning, or report the unresolved blocker.

@@ -57,7 +57,13 @@ Usage:
     python3 sync_ai_rules.py --force         # overwrite locally modified files
     python3 sync_ai_rules.py --uninstall     # remove all managed content
     python3 sync_ai_rules.py --restore       # restore the most recent backup
-    python3 sync_ai_rules.py --check         # report whether the install is current
+    python3 sync_ai_rules.py --check         # report revision and content drift
+
+``--check`` reports the repository-update status (installed revision vs fetched
+upstream) and the installation-integrity status separately. Integrity compares
+every managed path against its recorded SHA-256 and lists modified, missing,
+unexpected, and obsolete artifacts. It exits nonzero for content drift or when a
+required check (manifest or upstream revision) cannot be evaluated.
 
 Network access is required to clone/pull. Offline runs reuse the local copy.
 """
@@ -1285,28 +1291,158 @@ def read_installed_revision() -> str:
     return "(none)"
 
 
+def desired_file_paths(repo: Path) -> set[str]:
+    """Every file path the current source would install, for all agents."""
+    paths: set[str] = set()
+    for agent in ALL_AGENTS:
+        directory = TARGETS[agent]["commands"]
+        for source in command_files(repo):
+            paths.add(rel_to_home(directory / source.name))
+    for target in dict.fromkeys(AGENT_SKILL_TARGETS.values()):
+        for skill in skill_dirs(repo):
+            for relative in skill_payload(skill):
+                paths.add(rel_to_home(target / skill.name / relative))
+    return paths
+
+
+def desired_block_hashes(repo: Path) -> dict[str, str]:
+    """Every rules block the current source would install, for all agents."""
+    body = rules_body(repo)
+    digest = sha256_bytes(body.encode("utf-8"))
+    return {rel_to_home(TARGETS[agent]["rules"]): digest for agent in ALL_AGENTS}
+
+
+@dataclass
+class IntegrityReport:
+    """Per-artifact installation drift, grouped for separate reporting."""
+
+    modified: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    unexpected: list[str] = field(default_factory=list)
+    obsolete: list[str] = field(default_factory=list)
+
+    @property
+    def drift(self) -> bool:
+        return bool(self.modified or self.missing or self.unexpected or self.obsolete)
+
+
+def try_load_manifest() -> Manifest | None:
+    """Return the manifest, or ``None`` when absent or unreadable."""
+    if not MANIFEST_FILE.is_file():
+        return None
+    try:
+        return Manifest.from_json(MANIFEST_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def check_integrity(repo: Path, manifest: Manifest) -> IntegrityReport:
+    """Compare installed content against the manifest and the current source.
+
+    Classification is relative to the manifest, so an agent that was never
+    installed is not reported as missing:
+
+    * ``modified``   a managed path exists but its content no longer matches
+                     its recorded hash (including a rules block body);
+    * ``missing``    a managed path is absent, or a recorded rules block no
+                     longer has its markers;
+    * ``unexpected`` the current source wants a path that exists but is not
+                     recorded in the manifest (an unmanaged collision);
+    * ``obsolete``   a recorded path that the current source no longer
+                     distributes (it would be pruned by the next run).
+    """
+    report = IntegrityReport()
+    desired_files = desired_file_paths(repo)
+    desired_blocks = desired_block_hashes(repo)
+
+    for relative, entry in sorted(manifest.files.items()):
+        target = abs_from_home(relative)
+        if not target.is_file():
+            report.missing.append(relative)
+        elif sha256_file(target) != entry["sha256"]:
+            report.modified.append(relative)
+        elif relative not in desired_files:
+            report.obsolete.append(relative)
+
+    for key, entry in sorted(manifest.blocks.items()):
+        target = abs_from_home(key)
+        if not target.is_file():
+            report.missing.append(key)
+            continue
+        text = target.read_text(encoding="utf-8")
+        if not has_block(text):
+            report.missing.append(key)
+            continue
+        if sha256_bytes(block_body(text).encode("utf-8")) != entry["sha256"]:
+            report.modified.append(key)
+
+    for relative in sorted(desired_files):
+        if relative in manifest.files:
+            continue
+        if abs_from_home(relative).is_file():
+            report.unexpected.append(relative)
+
+    for key in sorted(desired_blocks):
+        if key in manifest.blocks:
+            continue
+        target = abs_from_home(key)
+        if target.is_file() and has_block(target.read_text(encoding="utf-8")):
+            report.unexpected.append(key)
+
+    return report
+
+
+def read_upstream_sha(repo: Path) -> str | None:
+    """Fetch and resolve the upstream short SHA, or ``None`` when unavailable."""
+    run_git(["fetch", "origin"], repo)
+    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
+    if not branch or branch == "HEAD":
+        return None
+    result = run_git(["rev-parse", "--short", f"origin/{branch}"], repo)
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def do_check() -> int:
     repo = resolve_repo(pull=False)
-    run_git(["fetch", "origin"], repo)
-
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
-    upstream = run_git(["rev-parse", "--short", f"origin/{branch}"], repo)
-    if upstream.returncode != 0:
-        print("WARNING: could not resolve upstream (offline?); skipping check.")
-        return 0
-    upstream_sha = upstream.stdout.strip()
-
     installed = read_installed_revision()
+    upstream_sha = read_upstream_sha(repo)
 
-    print(f"installed: {installed}")
-    print(f"upstream:  {upstream_sha}")
-    if installed == upstream_sha:
-        print("status:    up to date")
+    print("repository")
+    print(f"  installed  {installed}")
+    print(f"  upstream   {upstream_sha or 'unavailable'}")
+    if upstream_sha is None:
+        repo_status = "unknown"
+    elif installed == upstream_sha:
+        repo_status = "up to date"
     else:
-        print("status:    OUT OF DATE - run: python3 ~/.ai-rules/src/sync_ai_rules.py")
+        repo_status = "update available"
+    print(f"  status     {repo_status}")
+
+    print()
+    print("integrity")
+    manifest = try_load_manifest()
+    if manifest is not None:
+        report = check_integrity(repo, manifest)
+        for label in ("modified", "missing", "unexpected", "obsolete"):
+            for relative in getattr(report, label):
+                print(f"  {label:<10} {abs_from_home(relative)}")
+        integrity_status = "drift detected" if report.drift else "ok"
+        integrity_problem = report.drift
+    elif LEGACY_STATE_FILE.is_file():
+        integrity_status = "unknown (legacy install; run the installer to migrate)"
+        integrity_problem = True
+    else:
+        integrity_status = "not installed"
+        integrity_problem = True
+    print(f"  status     {integrity_status}")
+
     print()
     print_inventory(repo)
-    return 0 if installed == upstream_sha else 1
+
+    repository_problem = upstream_sha is None or installed != upstream_sha
+    return 1 if (repository_problem or integrity_problem) else 0
 
 
 # ---------------------------------------------------------------------------

@@ -547,5 +547,82 @@ class RestoreTests(InstallerTestCase):
         self.assertTrue(self.fx.manifest_file().is_file())
 
 
+class CheckTests(InstallerTestCase):
+    @staticmethod
+    def _entries(output: str, label: str) -> list[str]:
+        prefix = f"  {label}"
+        found: list[str] = []
+        for line in output.splitlines():
+            if line.startswith(prefix) and line[len(prefix) : len(prefix) + 1] == " ":
+                found.append(line.split(None, 1)[1].strip())
+        return found
+
+    def test_clean_install_reports_ok_integrity(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        result = self.fx.run("--check")
+        self.assertIn("repository", result.stdout)
+        self.assertIn("integrity", result.stdout)
+        self.assertIn("status     ok", result.stdout)
+        self.assertEqual([], self._entries(result.stdout, "modified"))
+        self.assertEqual([], self._entries(result.stdout, "missing"))
+        self.assertEqual([], self._entries(result.stdout, "unexpected"))
+        self.assertEqual([], self._entries(result.stdout, "obsolete"))
+
+    def test_check_identifies_exact_modified_file(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        target = self.fx.commands_dir("opencode") / "cmd.md"
+        target.write_text("LOCAL EDIT\n", encoding="utf-8")
+
+        result = self.fx.run("--check")
+        self.assertNotEqual(0, result.returncode)
+        modified = self._entries(result.stdout, "modified")
+        self.assertEqual(1, len(modified))
+        self.assertTrue(modified[0].endswith(".config/opencode/commands/cmd.md"))
+        self.assertIn("drift detected", result.stdout)
+
+    def test_check_identifies_missing_file(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        (self.fx.skill(SKILL_PRIMARY, "alpha") / "SKILL.md").unlink()
+
+        result = self.fx.run("--check")
+        self.assertNotEqual(0, result.returncode)
+        missing = self._entries(result.stdout, "missing")
+        self.assertTrue(any(path.endswith(".agents/skills/alpha/SKILL.md") for path in missing))
+        self.assertIn("drift detected", result.stdout)
+
+    def test_check_identifies_obsolete_artifact(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        self.fx.remove_command("cmd.md")
+
+        result = self.fx.run("--check")
+        self.assertNotEqual(0, result.returncode)
+        obsolete = self._entries(result.stdout, "obsolete")
+        self.assertEqual(4, len(obsolete))
+        self.assertTrue(all(path.endswith("cmd.md") for path in obsolete))
+
+    def test_check_identifies_unexpected_artifact(self) -> None:
+        self.assertEqual(0, self.fx.run("--agent", "opencode").returncode)
+        claude = self.fx.rules("claude")
+        claude.parent.mkdir(parents=True, exist_ok=True)
+        claude.write_text(
+            BLOCK_BEGIN + "\n# Rules\n\nBody.\n" + BLOCK_END + "\n",
+            encoding="utf-8",
+        )
+
+        result = self.fx.run("--check")
+        self.assertNotEqual(0, result.returncode)
+        unexpected = self._entries(result.stdout, "unexpected")
+        self.assertTrue(any(path.endswith(".claude/CLAUDE.md") for path in unexpected))
+
+    def test_check_reports_repository_and_integrity_separately(self) -> None:
+        self.assertEqual(0, self.fx.run().returncode)
+        result = self.fx.run("--check")
+        self.assertIn("repository", result.stdout)
+        self.assertIn("integrity", result.stdout)
+        self.assertLess(
+            result.stdout.index("repository"), result.stdout.index("integrity")
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
