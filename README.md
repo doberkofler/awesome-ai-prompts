@@ -1,9 +1,4 @@
-<div align="center">
-	<div>
-		<img width="500" height="350" src="media/logo.svg" alt="Awesome">
-		<h1 style="color: #494368; font-family: Futura, 'Inter', system-ui, -apple-system, sans-serif; font-size: 3.8em; font-weight: 400; letter-spacing: -0.02em; margin-top: -60px;">ai prompts</h1>
-	</div>
-</div>
+# Personal Agent Configuration
 
 ## What this is
 
@@ -43,7 +38,7 @@ Requires `git` and Python 3.
 ### Release install (recommended)
 
 Every release publishes a source archive and its SHA-256 checksum under
-[Releases](https://github.com/doberkofler/awesome-ai-prompts/releases). Set
+[Releases](https://github.com/doberkofler/personal-agent-config/releases). Set
 `VERSION` to the release tag you want (for example `v1.0.0`), then download,
 verify the checksum, and extract.
 
@@ -51,13 +46,13 @@ macOS / Linux:
 
 ```bash
 VERSION=v1.0.0
-BASE="https://github.com/doberkofler/awesome-ai-prompts/releases/download/${VERSION}"
+BASE="https://github.com/doberkofler/personal-agent-config/releases/download/${VERSION}"
 TMP="$(mktemp -d)"
-curl -fsSL -o "$TMP/awesome-ai-prompts-${VERSION}.tar.gz" "$BASE/awesome-ai-prompts-${VERSION}.tar.gz"
+curl -fsSL -o "$TMP/personal-agent-config-${VERSION}.tar.gz" "$BASE/personal-agent-config-${VERSION}.tar.gz"
 curl -fsSL -o "$TMP/SHA256SUMS" "$BASE/SHA256SUMS"
 ( cd "$TMP" && sha256sum -c SHA256SUMS )      # macOS: shasum -a 256 -c SHA256SUMS
 mkdir -p ~/.ai-rules/src
-tar -xzf "$TMP/awesome-ai-prompts-${VERSION}.tar.gz" -C ~/.ai-rules/src --strip-components=1
+tar -xzf "$TMP/personal-agent-config-${VERSION}.tar.gz" -C ~/.ai-rules/src --strip-components=1
 python3 ~/.ai-rules/src/sync_ai_rules.py
 ```
 
@@ -65,14 +60,14 @@ Windows (PowerShell):
 
 ```powershell
 $Version = "v1.0.0"
-$Base = "https://github.com/doberkofler/awesome-ai-prompts/releases/download/$Version"
+$Base = "https://github.com/doberkofler/personal-agent-config/releases/download/$Version"
 $Tmp = Join-Path $env:TEMP "ai-rules-$Version"
 New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
-Invoke-WebRequest "$Base/awesome-ai-prompts-$Version.tar.gz" -OutFile "$Tmp/awesome-ai-prompts-$Version.tar.gz"
+Invoke-WebRequest "$Base/personal-agent-config-$Version.tar.gz" -OutFile "$Tmp/personal-agent-config-$Version.tar.gz"
 Invoke-WebRequest "$Base/SHA256SUMS" -OutFile "$Tmp/SHA256SUMS"
 Get-Content "$Tmp/SHA256SUMS"   # confirm it matches Get-FileHash -Algorithm SHA256
 New-Item -ItemType Directory -Force -Path "$HOME/.ai-rules/src" | Out-Null
-tar -xzf "$Tmp/awesome-ai-prompts-$Version.tar.gz" -C "$HOME/.ai-rules/src" --strip-components=1
+tar -xzf "$Tmp/personal-agent-config-$Version.tar.gz" -C "$HOME/.ai-rules/src" --strip-components=1
 python "$HOME/.ai-rules/src/sync_ai_rules.py"
 ```
 
@@ -80,7 +75,7 @@ python "$HOME/.ai-rules/src/sync_ai_rules.py"
 
 ```bash
 VERSION=v1.0.0
-git clone --branch "$VERSION" --depth 1 https://github.com/doberkofler/awesome-ai-prompts.git ~/.ai-rules/src
+git clone --branch "$VERSION" --depth 1 https://github.com/doberkofler/personal-agent-config.git ~/.ai-rules/src
 python3 ~/.ai-rules/src/sync_ai_rules.py
 ```
 
@@ -90,8 +85,8 @@ If you are developing the rules rather than consuming them, work in a `main`
 checkout and run the installer directly against your working tree:
 
 ```bash
-git clone https://github.com/doberkofler/awesome-ai-prompts.git
-cd awesome-ai-prompts
+git clone https://github.com/doberkofler/personal-agent-config.git
+cd personal-agent-config
 python3 sync_ai_rules.py --dry-run   # preview the plan
 python3 sync_ai_rules.py             # install the working-tree content
 ```
@@ -129,7 +124,7 @@ repository, and review the script before running it.
 ### Notes
 
 Maintainers cut a release by pushing a `v*` tag; CI runs `release.py`, which
-builds `dist/awesome-ai-prompts-<tag>.tar.gz` and `dist/SHA256SUMS` and attaches
+builds `dist/personal-agent-config-<tag>.tar.gz` and `dist/SHA256SUMS` and attaches
 both to the GitHub release.
 
 See [`PROVENANCE.md`](PROVENANCE.md) for content origins, intentional adaptations,

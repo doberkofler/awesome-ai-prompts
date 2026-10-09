@@ -37,7 +37,7 @@ class ReleaseTests(unittest.TestCase):
         result = run_release("--version", VERSION, "--output", str(self.output))
         self.assertEqual(0, result.returncode, result.stderr)
 
-        archive = self.output / f"awesome-ai-prompts-{VERSION}.tar.gz"
+        archive = self.output / f"personal-agent-config-{VERSION}.tar.gz"
         checksums = self.output / "SHA256SUMS"
         self.assertTrue(archive.is_file())
         self.assertTrue(checksums.is_file())
@@ -51,12 +51,12 @@ class ReleaseTests(unittest.TestCase):
     def test_archive_contains_tracked_content_at_release_root(self) -> None:
         result = run_release("--version", VERSION, "--output", str(self.output))
         self.assertEqual(0, result.returncode, result.stderr)
-        archive = self.output / f"awesome-ai-prompts-{VERSION}.tar.gz"
+        archive = self.output / f"personal-agent-config-{VERSION}.tar.gz"
 
         with tarfile.open(archive, "r:gz") as tar:
             names = set(tar.getnames())
 
-        prefix = f"awesome-ai-prompts-{VERSION}/"
+        prefix = f"personal-agent-config-{VERSION}/"
         self.assertIn(prefix + "sync_ai_rules.py", names)
         self.assertIn(prefix + "docs/lint-rules.md", names)
         self.assertIn(prefix + "LICENSE", names)

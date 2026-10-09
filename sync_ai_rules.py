@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Distribute the canonical AI rules to the local agent configurations.
 
-Canonical source: https://github.com/doberkofler/awesome-ai-prompts
+Canonical source: https://github.com/doberkofler/personal-agent-config
 
 The same content is written to each supported agent's user-level location:
 
@@ -82,7 +82,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-REPO_URL = "https://github.com/doberkofler/awesome-ai-prompts.git"
+REPO_URL = "https://github.com/doberkofler/personal-agent-config.git"
 CACHE_DIR = Path.home() / ".ai-rules" / "src"
 MANIFEST_FILE = Path.home() / ".ai-rules" / "manifest.json"
 BACKUP_DIR = Path.home() / ".ai-rules" / "backups"
@@ -92,8 +92,19 @@ LEGACY_MANAGED_SKILLS_FILE = Path.home() / ".ai-rules" / "managed-skills"
 STATE_FILE = LEGACY_STATE_FILE
 
 MANIFEST_VERSION = 1
-BLOCK_BEGIN = "<!-- BEGIN awesome-ai-prompts (managed) -->"
-BLOCK_END = "<!-- END awesome-ai-prompts -->"
+# Current managed-block markers.
+BLOCK_BEGIN = "<!-- BEGIN personal-agent-config (managed) -->"
+BLOCK_END = "<!-- END personal-agent-config -->"
+# The repository was renamed from ``awesome-ai-prompts``; the previous markers
+# are still recognized so the next run rewrites them in place instead of
+# appending a second block.
+PREVIOUS_BLOCK_BEGIN = "<!-- BEGIN awesome-ai-prompts (managed) -->"
+PREVIOUS_BLOCK_END = "<!-- END awesome-ai-prompts -->"
+MANAGED_MARKERS: tuple[tuple[str, str], ...] = (
+    (BLOCK_BEGIN, BLOCK_END),
+    (PREVIOUS_BLOCK_BEGIN, PREVIOUS_BLOCK_END),
+)
+# Even older one-line marker, superseded before the managed-block format.
 LEGACY_MARKER_PREFIX = "<!-- awesome-ai-prompts "
 
 HOME = Path.home()
@@ -614,27 +625,57 @@ def render_block(body: str) -> str:
     return f"{BLOCK_BEGIN}\n{body}\n{BLOCK_END}\n"
 
 
+def find_block(text: str) -> tuple[str, str] | None:
+    """Return the ``(begin, end)`` markers of the single managed block.
+
+    Both the current and the previous marker generation are recognized, but the
+    pair must be unique and belong to one generation; a file mixing or
+    duplicating markers is treated as having no clean block.
+    """
+    for begin, end in MANAGED_MARKERS:
+        if text.count(begin) != 1 or text.count(end) != 1:
+            continue
+        if any(
+            text.count(other_begin) or text.count(other_end)
+            for other_begin, other_end in MANAGED_MARKERS
+            if (other_begin, other_end) != (begin, end)
+        ):
+            continue
+        return begin, end
+    return None
+
+
+def has_any_marker(text: str) -> bool:
+    """Return ``True`` when any managed-block marker is present."""
+    return any(
+        text.count(begin) or text.count(end) for begin, end in MANAGED_MARKERS
+    )
+
+
 def has_block(text: str) -> bool:
-    return text.count(BLOCK_BEGIN) == 1 and text.count(BLOCK_END) == 1
+    return find_block(text) is not None
 
 
 def block_body(text: str) -> str:
-    start = text.index(BLOCK_BEGIN) + len(BLOCK_BEGIN)
-    end = text.index(BLOCK_END)
-    return text[start:end].strip("\n")
+    begin, end = find_block(text) or (BLOCK_BEGIN, BLOCK_END)
+    start = text.index(begin) + len(begin)
+    stop = text.index(end)
+    return text[start:stop].strip("\n")
 
 
 def replace_block(text: str, block: str) -> str:
-    start = text.index(BLOCK_BEGIN)
-    end = text.index(BLOCK_END) + len(BLOCK_END)
-    return text[:start] + block.rstrip("\n") + text[end:]
+    begin, end = find_block(text) or (BLOCK_BEGIN, BLOCK_END)
+    start = text.index(begin)
+    stop = text.index(end) + len(end)
+    return text[:start] + block.rstrip("\n") + text[stop:]
 
 
 def remove_block(text: str) -> str:
-    start = text.index(BLOCK_BEGIN)
-    end = text.index(BLOCK_END) + len(BLOCK_END)
+    begin, end = find_block(text) or (BLOCK_BEGIN, BLOCK_END)
+    start = text.index(begin)
+    stop = text.index(end) + len(end)
     before = text[:start].rstrip("\n")
-    after = text[end:].lstrip("\n")
+    after = text[stop:].lstrip("\n")
     if before and after:
         return before + "\n\n" + after
     if before:
@@ -682,7 +723,7 @@ def plan_rules(
                 _rules_change(plan, key, existing, replace_block(existing, block), "")
             elif existing.lstrip().startswith(LEGACY_MARKER_PREFIX):
                 _rules_change(plan, key, existing, block, "migrate legacy file")
-            elif BLOCK_BEGIN in existing or BLOCK_END in existing:
+            elif has_any_marker(existing):
                 plan.conflicts.append(
                     Conflict(
                         "rules block",

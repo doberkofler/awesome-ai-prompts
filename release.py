@@ -4,8 +4,8 @@
 The release workflow runs this on a ``v*`` tag. It writes two files into the
 output directory:
 
-    awesome-ai-prompts-<version>.tar.gz   the repository at the tagged commit
-    SHA256SUMS                            one line: <sha256>  <artifact name>
+    personal-agent-config-<version>.tar.gz   the repository at the tagged commit
+    SHA256SUMS                               one line: <sha256>  <artifact name>
 
 The archive is produced with ``git archive`` from ``HEAD``, so it contains only
 committed, tracked content and is reproducible from the tag.
@@ -25,7 +25,7 @@ from pathlib import Path
 
 # A release tag such as v1.0.0 or v1.2.3-rc.1.
 VERSION_PATTERN = re.compile(r"^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
-ARCHIVE_STEM = "awesome-ai-prompts-"
+ARCHIVE_STEM = "personal-agent-config-"
 CHECKSUM_NAME = "SHA256SUMS"
 REPO_ROOT = Path(__file__).resolve().parent
 

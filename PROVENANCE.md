@@ -7,6 +7,31 @@ canonical content is distributed to supported agents.
 `PROVENANCE.md` itself is not distributed, so these maintenance details add no
 runtime context.
 
+## Repository rename
+
+The repository was renamed in place from `awesome-ai-prompts` to
+`personal-agent-config`. The slug, the release archive prefix, the managed-block
+markers, and every canonical URL now use the new name; the historical commit
+links in this document resolve through GitHub's rename redirect.
+
+GitHub preserves issues, wikis, stars, followers, and releases, and continues to
+redirect web, `git clone`, `git fetch`, and `git push` traffic from the old slug.
+Existing clones still work, but should retarget their remote:
+
+```bash
+git remote set-url origin https://github.com/doberkofler/personal-agent-config.git
+```
+
+The old name must never be reused for a new repository, or the redirects stop
+working.
+
+Installed rules migrate automatically. The installer recognizes the previous
+managed-block markers (`<!-- BEGIN/END awesome-ai-prompts -->`), rewrites them
+in place with the new markers on the next run, and preserves all content outside
+the block. It also still recognizes the superseded one-line marker
+`<!-- awesome-ai-prompts <sha> -->`. A file that mixes or duplicates marker
+generations is reported as a malformed block and left untouched.
+
 ## Skills
 
 ### Upstream baseline
@@ -130,9 +155,9 @@ documents maintained in this repository.
 
 - `general-guidelines.md`, `lint-rules.md`, `sql-plsql-rules.md`, and
   `typescript-rules.md` first appear in repository commit
-  [`7b678ab`](https://github.com/doberkofler/awesome-ai-prompts/commit/7b678ab04d501aa38b58ce39f54863109976525e).
+  [`7b678ab`](https://github.com/doberkofler/personal-agent-config/commit/7b678ab04d501aa38b58ce39f54863109976525e).
 - `mui-rules.md` and `react-rules.md` first appear in repository commit
-  [`9368ed0`](https://github.com/doberkofler/awesome-ai-prompts/commit/9368ed0ededbbf1bba95a0c6ebf670eae3d0b4d2).
+  [`9368ed0`](https://github.com/doberkofler/personal-agent-config/commit/9368ed0ededbbf1bba95a0c6ebf670eae3d0b4d2).
 
 Treat these files as opinionated local standards, not snapshots of vendor
 documentation. Verify version-sensitive claims against primary vendor documentation
@@ -151,11 +176,11 @@ They are OpenCode-style command protocols that the installer distributes to ever
 supported agent's command directory.
 
 - `dev-reset.md` and `dev-verimode.md` first appear in repository commit
-  [`3e56d9d`](https://github.com/doberkofler/awesome-ai-prompts/commit/3e56d9d56acddcb7cbcf305986d3691b44f98a16).
+  [`3e56d9d`](https://github.com/doberkofler/personal-agent-config/commit/3e56d9d56acddcb7cbcf305986d3691b44f98a16).
 - `dev-decompose.md` first appears in repository commit
-  [`a51dc4f`](https://github.com/doberkofler/awesome-ai-prompts/commit/a51dc4f3117d7118cce18bf06d653411c4e0ad9d).
+  [`a51dc4f`](https://github.com/doberkofler/personal-agent-config/commit/a51dc4f3117d7118cce18bf06d653411c4e0ad9d).
 - `dev-find-reinventions.md` first appears in repository commit
-  [`a650280`](https://github.com/doberkofler/awesome-ai-prompts/commit/a6502800aaca063f3e2cc8f97df206d0ead35aab).
+  [`a650280`](https://github.com/doberkofler/personal-agent-config/commit/a6502800aaca063f3e2cc8f97df206d0ead35aab).
 
 ## Synchronization and adaptation
 
@@ -195,7 +220,7 @@ There are two distinct operations:
 Running `python3 sync_ai_rules.py`:
 
 - concatenates `docs/*.md` in filename order into a marked repository-owned block
-  (`<!-- BEGIN/END awesome-ai-prompts -->`) inside each agent's native global rules
+  (`<!-- BEGIN/END personal-agent-config -->`) inside each agent's native global rules
   file, replacing only that block and preserving content outside it; an existing
   rules file without the block is left intact and the block is appended;
 - copies each `skills/<name>/` payload file to `~/.agents/skills/` and
@@ -255,7 +280,7 @@ repository managed.
 
 The recommended installation no longer executes from mutable `main`. Pushing an
 annotated `v*` tag triggers `.github/workflows/release.yml`, which runs the test suite,
-then `release.py` builds `dist/awesome-ai-prompts-<tag>.tar.gz` (via `git archive` at
+then `release.py` builds `dist/personal-agent-config-<tag>.tar.gz` (via `git archive` at
 the tagged commit) and `dist/SHA256SUMS`, and `gh release create` attaches both to the
 GitHub release. A checked-out tag is immutable; the installer detects a fixed checkout
 and skips `git pull`.

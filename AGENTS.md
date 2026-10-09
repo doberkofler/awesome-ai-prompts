@@ -1,4 +1,4 @@
-# Agent Guidelines for awesome-ai-prompts
+# Agent Guidelines for personal-agent-config
 
 This document provides instructions for agentic coding assistants operating in this repository. Adhere to these standards to ensure consistency across all AI prompts and meta-protocols.
 
@@ -156,4 +156,4 @@ When updating `AGENTS.md`:
 4.  **Commit** changes with a clear description of the "why" behind the refinement.
 
 ---
-*This file is maintained by the AI agents and developers of the awesome-ai-prompts repository.*
+*This file is maintained by the AI agents and developers of the personal-agent-config repository.*

@@ -14,8 +14,10 @@ from tests import harness
 from tests.harness import InstallerFixture
 
 SKILL_PRIMARY = harness.SKILL_DIRS[0]
-BLOCK_BEGIN = "<!-- BEGIN awesome-ai-prompts (managed) -->"
-BLOCK_END = "<!-- END awesome-ai-prompts -->"
+BLOCK_BEGIN = "<!-- BEGIN personal-agent-config (managed) -->"
+BLOCK_END = "<!-- END personal-agent-config -->"
+PREVIOUS_BLOCK_BEGIN = "<!-- BEGIN awesome-ai-prompts (managed) -->"
+PREVIOUS_BLOCK_END = "<!-- END awesome-ai-prompts -->"
 
 
 class InstallerTestCase(unittest.TestCase):
@@ -196,6 +198,46 @@ class RulesTests(InstallerTestCase):
         text = path.read_text(encoding="utf-8")
         self.assertNotIn("LOCAL EDIT", text)
         self.assertIn("Body.", text)
+
+
+class MarkerMigrationTests(InstallerTestCase):
+    def test_previous_markers_are_rewritten_in_place(self) -> None:
+        for agent in harness.RULE_PATHS:
+            path = self.fx.rules(agent)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "# Personal\n\n"
+                f"{PREVIOUS_BLOCK_BEGIN}\nOLD BODY\n{PREVIOUS_BLOCK_END}\n"
+                "\n# Trailing\n",
+                encoding="utf-8",
+            )
+
+        result = self.fx.run()
+        self.assertEqual(0, result.returncode, result.stderr)
+
+        for agent in harness.RULE_PATHS:
+            text = self.fx.rules(agent).read_text(encoding="utf-8")
+            self.assertEqual(1, text.count(BLOCK_BEGIN))
+            self.assertEqual(1, text.count(BLOCK_END))
+            self.assertNotIn(PREVIOUS_BLOCK_BEGIN, text)
+            self.assertNotIn(PREVIOUS_BLOCK_END, text)
+            self.assertIn("# Personal", text)
+            self.assertIn("# Trailing", text)
+            self.assertIn("# Rules", text)
+            self.assertNotIn("OLD BODY", text)
+
+    def test_mixed_generation_markers_are_refused(self) -> None:
+        path = self.fx.rules("opencode")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"{BLOCK_BEGIN}\nBODY\n{PREVIOUS_BLOCK_END}\n", encoding="utf-8"
+        )
+
+        result = self.fx.run()
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("malformed block", result.stderr)
+        self.assertIn("BODY", path.read_text(encoding="utf-8"))
 
 
 class CommandTests(InstallerTestCase):
