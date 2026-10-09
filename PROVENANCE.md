@@ -168,8 +168,10 @@ The TypeScript policy has one ownership chain: `typescript-rules.md` is the cano
 language and runtime-safety baseline, `lint-rules.md` defines its Oxlint/Oxfmt tooling
 implementation, and `react-rules.md` adds only React-specific design rules. Suppression
 directives and the `any` policy have one form, defined in `typescript-rules.md` and
-enforced, not redefined, in `lint-rules.md`. Projects may replace a baseline rule only with
-an explicit scoped override and reason.
+enforced, not redefined, in `lint-rules.md`. Module-file naming and API-documentation
+conventions are also owned by `typescript-rules.md`; `react-rules.md` defers to them
+instead of restating them. Projects may replace a baseline rule only with an explicit
+scoped override and reason.
 
 The domain-oriented skills intentionally use `CONTEXT.md` and `CONTEXT-MAP.md` for
 glossaries and `docs/adr/` for decisions. This differs from upstream's current

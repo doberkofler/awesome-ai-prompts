@@ -25,8 +25,14 @@ runtime boundaries, modules, naming, and API documentation.
 
 ### Naming Conventions
 - **Variables/Functions**: `camelCase`
-- **Files**: `camelCase` (e.g., `user.ts`, `supplierInvoice.ts`); named React component
-  files use `PascalCase.tsx`
+- **Non-component modules**: `camelCase` (e.g., `user.ts`, `supplierInvoice.ts`).
+- **Hooks**: `camelCase` with a `use` prefix (`useUser.ts`).
+- **Named React component modules**: `PascalCase.tsx` (e.g., `UserCard.tsx`).
+- **Module entrypoints**: `index.ts` and `index.tsx` are exempt from the module-name
+  convention.
+- **Tests and stories**: mirror the production filename before the suffix
+  (`UserCard.test.tsx`, `UserCard.stories.tsx`, `useUser.test.ts`). Generated and
+  framework-mandated filenames are exempt.
 - **Constants**: `UPPER_CASE` for global constants
 
 ## JavaScript
@@ -119,8 +125,25 @@ flag, casting to `any`) without:
 3. A `NOTE: ` comment at the site stating the justification and what removes it.
 
 ## Documentation
-- Use JSDoc (`/** ... */`) for all exported functions and types
-- Especially required in `src/data/`
+
+- Document public APIs and non-obvious contracts; do not document every export merely
+  because it is exported.
+- Cover the applicable invariants, side effects, return semantics, and thrown errors.
+- Use TypeDoc-compatible documentation comments (`/** ... */`). Do not repeat
+  TypeScript types in `@param`/`@returns` tags — TypeDoc derives them from the
+  signature.
+- Prefer `@returns` over `@return` for consistency with TypeDoc's canonical tag.
+
+```typescript
+/**
+ * Loads a user from persistent storage.
+ *
+ * @param userId - Identifier of the requested user.
+ * @returns The matching user.
+ * @throws {@link UserNotFoundError} When no user exists for the identifier.
+ */
+export const loadUser = (userId: UserId): Promise<User> => { /* ... */ };
+```
 
 ## Type Definitions
 
@@ -137,14 +160,15 @@ flag, casting to `any`) without:
   argument, return) so inferred and dependency-sourced `any` values are caught even where no
   explicit `any` appears.
 - **Never** use type assertions (`as`) on external data — use Zod (see below).
-- Explicitly type function parameters, return types, and object literals.
+- Explicitly type function parameters.
+- Require explicit return types at public API, recursive, and overload boundaries;
+  otherwise allow TypeScript inference.
 - No enums. Use union types.
 - Use `readonly` modifiers for immutable properties and arrays.
 - Use `private` modifiers for private class members.
 - Leverage utility types (`Partial`, `Required`, `Pick`, `Omit`, `Record`, etc.).
 - Use discriminated unions with exhaustiveness checking for type narrowing.
 - Handle `null` and `undefined` explicitly — never assume.
-- All exported functions must have explicit return types.
 - Prefer `type` over `interface`.
 
 ## Advanced Patterns
@@ -156,9 +180,9 @@ flag, casting to `any`) without:
 
 ## Code Organization
 
-- Organize types in dedicated files (`types.ts`) or alongside implementations.
-- Document everything with JSDoc.
-- Create a central `types.ts` or `src/types/` directory for shared types.
+- Colocate types with the implementation they describe by default.
+- Create a shared type module (`types.ts` or `src/types/`) only for concepts genuinely
+  shared across multiple modules.
 
 ## Best Practices
 
