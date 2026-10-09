@@ -21,6 +21,11 @@ distributed, so these maintenance details add no runtime context.
 `Verbatim` below means every retained payload file matched the audited snapshot.
 It does not include the intentionally omitted `agents/` sidecars.
 
+All files in the verbatim and adapted skill directories listed below are covered
+by the upstream MIT license reproduced in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Locally authored skills and
+documents are not covered by that upstream notice.
+
 ### Verbatim skills
 
 - [`grill-me`](https://github.com/mattpocock/skills/tree/b0618bc/skills/productivity/grill-me)
